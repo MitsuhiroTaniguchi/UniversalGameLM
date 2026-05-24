@@ -5,18 +5,22 @@ import os
 import re
 from functools import lru_cache
 from pathlib import Path
+import chess
 
 from src.chess_parser import parse_chess_inputs
 from src.shogi_parser import parse_shogi_directory
-from src.go_parser import parse_go_directory
+from src.go_parser import parse_go_directory, validate_go_token_sequence
 from src.othello_parser import (
     parse_othello_hf_dataset,
+    parse_othello_inputs,
     parse_othello_jsonl_to_tokens,
     parse_othello_pgn_to_tokens,
     validate_othello_moves,
 )
 from src.poker_parser import parse_phh_to_tokens
 from src.bridge_parser import parse_bridge_inputs
+from src.bridge_parser import _validate_auction as validate_bridge_auction
+from src.bridge_parser import _validate_play as validate_bridge_play
 from src.hf_uploader import HuggingFaceShardUploader
 from src.mahjonglm_compat import entry_to_mahjonglm_row, entry_to_mahjonglm_row_tokens
 from src.stats import DatasetStatsAccumulator
@@ -73,10 +77,8 @@ def iter_game_entries(game, input_paths, max_records=None):
                 dataset_spec = input_text.removeprefix("hf://")
                 dataset_id, _, split = dataset_spec.partition(":")
                 iterator = parse_othello_hf_dataset(dataset_id, split=split or "train", max_games=max_records)
-            elif path.suffix.lower() == ".jsonl":
-                iterator = parse_othello_jsonl_to_tokens(str(path), max_games=max_records)
             else:
-                iterator = parse_othello_pgn_to_tokens(str(path), max_games=max_records)
+                iterator = parse_othello_inputs(str(path), max_games=max_records)
         elif game == "poker":
             iterator = parse_phh_to_tokens(str(path), max_hands=max_records)
         elif game == "bridge":
@@ -97,7 +99,7 @@ def iter_game_entries(game, input_paths, max_records=None):
                     "ingestion_version": 2,
                 },
             }
-            if max_records and emitted >= max_records and game != "poker":
+            if max_records and emitted >= max_records and game not in {"poker", "bridge"}:
                 return
 
 
@@ -115,11 +117,23 @@ def validate_entry(entry):
     if any(not isinstance(token, str) or not token for token in tokens):
         raise ProductionDatasetError(f"{game} sequence contains an invalid token")
     if game == "chess":
+        board = chess.Board()
         for token in tokens[2:-1]:
-            if token.startswith(("FEN:", "VARIANT:")):
+            if token.startswith("VARIANT:"):
+                continue
+            if token.startswith("FEN:"):
+                fen = token.split(":", 1)[1].replace("_", " ")
+                try:
+                    board = chess.Board(fen)
+                except ValueError as exc:
+                    raise ProductionDatasetError(f"Invalid chess FEN token: {token}") from exc
                 continue
             if not re.fullmatch(r"[a-h][1-8][a-h][1-8][qrbn]?", token):
                 raise ProductionDatasetError(f"Invalid chess token: {token}")
+            move = chess.Move.from_uci(token)
+            if move not in board.legal_moves:
+                raise ProductionDatasetError(f"Illegal chess move token: {token}")
+            board.push(move)
     if game == "shogi":
         for token in tokens[2:-1]:
             if token.startswith(("SETUP:", "TURN:", "END:")):
@@ -129,22 +143,10 @@ def validate_entry(entry):
         if not any(token.startswith("END:") for token in tokens):
             raise ProductionDatasetError("Shogi entry is missing terminal token")
     if game == "go":
-        if not tokens[2].startswith("SZ:"):
-            raise ProductionDatasetError("Go entry is missing board size token")
-        board_size = int(tokens[2].split(":", 1)[1])
-        for token in tokens[3:-1]:
-            if token.endswith(":pass"):
-                continue
-            if token.startswith(("AB:", "AW:", "AE:", "b:", "w:")):
-                point = token.split(":", 1)[1]
-                if not re.fullmatch(r"[a-z]{2}", point):
-                    raise ProductionDatasetError(f"Invalid Go point token: {token}")
-                col = ord(point[0]) - ord("a")
-                row = ord(point[1]) - ord("a")
-                if not (0 <= col < board_size and 0 <= row < board_size):
-                    raise ProductionDatasetError(f"Go point out of range: {token}")
-                continue
-            raise ProductionDatasetError(f"Invalid Go token: {token}")
+        try:
+            validate_go_token_sequence(tokens)
+        except Exception as exc:
+            raise ProductionDatasetError(f"Invalid Go sequence: {exc}") from exc
     if game == "othello":
         try:
             validate_othello_moves(tokens[2:-1])
@@ -174,36 +176,65 @@ def validate_entry(entry):
         else:
             raise ProductionDatasetError(f"Unknown poker view token: {tokens[2]}")
     if game == "bridge":
-        if tokens[2] != "view_complete":
-            raise ProductionDatasetError("Bridge currently supports only complete views")
+        if not tokens[2].startswith("view_"):
+            raise ProductionDatasetError("Bridge entry is missing view token")
         hand_tokens = [token for token in tokens if token.startswith("hand:")]
-        if len(hand_tokens) != 4:
-            raise ProductionDatasetError("Bridge entry must contain four hand tokens")
+        if tokens[2] == "view_complete" and hand_tokens:
+            raise ProductionDatasetError("Bridge complete view must not contain hidden hands")
+        if tokens[2].startswith("view_imperfect_") and len(hand_tokens) != 1:
+            raise ProductionDatasetError("Bridge imperfect view must contain exactly one hand")
+        if tokens[2] == "view_omniscient" and len(hand_tokens) != 4:
+            raise ProductionDatasetError("Bridge omniscient view must contain four hands")
+        if tokens[2] not in {"view_complete", "view_omniscient"} and not tokens[2].startswith("view_imperfect_"):
+            raise ProductionDatasetError(f"Unknown bridge view token: {tokens[2]}")
         cards = []
+        hands = {}
         for token in hand_tokens:
-            cards_text = token.split(":", 2)[2]
+            _, seat, cards_text = token.split(":", 2)
             if len(cards_text) != 26:
                 raise ProductionDatasetError(f"Bridge hand token has wrong length: {token}")
-            cards.extend(cards_text[i:i + 2] for i in range(0, len(cards_text), 2))
-        if len(cards) != 52 or len(set(cards)) != 52:
+            hand_cards = [cards_text[i:i + 2] for i in range(0, len(cards_text), 2)]
+            hands[seat] = hand_cards
+            cards.extend(hand_cards)
+        if tokens[2] == "view_omniscient" and (len(cards) != 52 or len(set(cards)) != 52):
             raise ProductionDatasetError("Bridge entry must contain 52 unique dealt cards")
         for card in cards:
             if not re.fullmatch(r"[SHDC][AKQJT98765432]", card):
                 raise ProductionDatasetError(f"Invalid bridge card: {card}")
+        dealer = None
+        play_leader = None
+        calls = []
+        played_cards = []
         for token in tokens[3:-1]:
-            if token.startswith(("dealer:", "vul:", "contract:", "declarer:", "hand:")):
+            if token.startswith("dealer:"):
+                dealer = token.split(":", 1)[1]
+                continue
+            if token.startswith("play_leader:"):
+                play_leader = token.split(":", 1)[1]
+                continue
+            if token.startswith(("vul:", "contract:", "declarer:", "hand:")):
                 continue
             if token.startswith("bid:"):
                 call = token.split(":", 1)[1]
                 if not re.fullmatch(r"(?:PASS|X|XX|[1-7][CDHSN])", call):
                     raise ProductionDatasetError(f"Invalid bridge bid token: {token}")
+                calls.append(call)
                 continue
             if token.startswith("play:"):
                 card = token.split(":", 1)[1]
                 if not re.fullmatch(r"[SHDC][AKQJT98765432]", card):
                     raise ProductionDatasetError(f"Invalid bridge play token: {token}")
+                played_cards.append(card)
                 continue
             raise ProductionDatasetError(f"Invalid bridge token: {token}")
+        try:
+            validate_bridge_auction(calls, dealer)
+            if played_cards and tokens[2] != "view_omniscient" and not (entry.get("metadata") or {}).get("bridge_play_validated"):
+                raise ProductionDatasetError("Bridge play tokens without hidden hands must come from a validated parser")
+            if tokens[2] == "view_omniscient" and played_cards:
+                validate_bridge_play(played_cards, hands, play_leader)
+        except Exception as exc:
+            raise ProductionDatasetError(f"Invalid bridge sequence: {exc}") from exc
 
 
 def row_token_count(row):
@@ -331,7 +362,7 @@ def build_game_shards(
     try:
         for entry in iter_game_entries(game, input_paths, max_records=max_records):
             metadata = entry.get("metadata") or {}
-            starts_new_view_group = game != "poker" or metadata.get("view_type") == "complete"
+            starts_new_view_group = game not in {"poker", "bridge"} or metadata.get("view_type") == "complete"
             if total_tokens >= target_tokens and starts_new_view_group:
                 break
             stats_entry = entry

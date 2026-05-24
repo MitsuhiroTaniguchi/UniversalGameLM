@@ -18,6 +18,28 @@ from src.production_pipeline import build_game_shards, validate_entry, Productio
 from src.stats import DatasetStatsAccumulator
 from src.mahjonglm_compat import entry_to_mahjonglm_row, tokens_to_mahjonglm_stream
 
+TERMINAL_OTHELLO_MOVES = [
+    "d3", "c3", "b3", "b2", "b1", "a1", "c4", "c1",
+    "c2", "d2", "d1", "e1", "a2", "a3", "f5", "e2",
+    "f1", "g1", "pass", "f2", "pass", "e3", "pass", "b5",
+    "b4", "a5", "a4", "c5", "a6", "f4", "f3", "g3",
+    "g2", "h2", "h1", "h3", "h4", "g4", "c6", "g5",
+    "h5", "b6", "c7", "d6", "e6", "f6", "g6", "h6",
+    "h7", "a7", "pass", "b7", "a8", "d7", "e7", "f7",
+    "g7", "g8", "b8", "c8", "d8", "e8", "f8", "h8",
+    "pass", "pass",
+]
+
+
+def terminal_othello_pgn():
+    pairs = []
+    for idx in range(0, len(TERMINAL_OTHELLO_MOVES), 2):
+        black = TERMINAL_OTHELLO_MOVES[idx].upper()
+        white = TERMINAL_OTHELLO_MOVES[idx + 1].upper()
+        pairs.append(f"{idx // 2 + 1}. {black} {white}")
+    return " ".join(pairs) + " *"
+
+
 class TestUniversalGameParsers(unittest.TestCase):
     
     def test_chess_parser(self):
@@ -106,13 +128,12 @@ class TestUniversalGameParsers(unittest.TestCase):
             os.remove(temp_path)
 
     def test_othello_parser(self):
-        # Create a mock Othello PGN with 8 moves to pass the quality filter
         mock_pgn = """[Event "Othello Match"]
 [Black "PlayerB"]
 [White "PlayerW"]
 [Result "32-32"]
 
-1. F5 D6 2. C3 F3 3. F4 D3 4. C4 G6 *"""
+""" + terminal_othello_pgn()
         with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
             f.write(mock_pgn)
             temp_path = f.name
@@ -122,10 +143,7 @@ class TestUniversalGameParsers(unittest.TestCase):
             tokens, meta = games[0]
             self.assertEqual(tokens[0], "<bos>")
             self.assertEqual(tokens[1], "<othello>")
-            self.assertEqual(tokens[2], "f5")
-            self.assertEqual(tokens[3], "d6")
-            self.assertEqual(tokens[4], "c3")
-            self.assertEqual(tokens[5], "f3")
+            self.assertEqual(tokens[2:6], TERMINAL_OTHELLO_MOVES[:4])
             self.assertEqual(tokens[-1], "<eos>")
             self.assertEqual(meta["black"], "PlayerB")
         finally:
@@ -166,15 +184,15 @@ class TestUniversalGameParsers(unittest.TestCase):
 [Deal "N:AKQJ.543.2.98765 T987.2.AKQJ.T432 6543.AKQJ.43.AKQ 2.T9876.T98765.J"]
 [Auction "N"]
 1NT Pass 3NT Pass Pass Pass
-[Play "E"]
-HA HJ H6 H3
+[Play "S"]
+HA H9 H5 H2
 """
         with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".pbn") as f:
             f.write(mock_pbn)
             temp_path = f.name
         try:
             boards = list(parse_pbn_to_tokens(temp_path))
-            self.assertEqual(len(boards), 1)
+            self.assertEqual(len(boards), 6)
             tokens, meta = boards[0]
             self.assertEqual(tokens[0], "<bos>")
             self.assertEqual(tokens[1], "<bridge>")
@@ -183,7 +201,16 @@ HA HJ H6 H3
             self.assertIn("bid:1N", tokens)
             self.assertIn("play:HA", tokens)
             self.assertEqual(meta["seat_count"], 4)
-            validate_entry({"game": "bridge", "tokens": tokens, "metadata": meta})
+            self.assertFalse(any(token.startswith("hand:") for token in tokens))
+            view_types = [entry_meta["view_type"] for _, entry_meta in boards]
+            self.assertEqual(view_types.count("imperfect"), 4)
+            self.assertIn("omniscient", view_types)
+            for view_tokens, view_meta in boards:
+                validate_entry({"game": "bridge", "tokens": view_tokens, "metadata": view_meta})
+                if view_meta["view_type"] == "imperfect":
+                    self.assertEqual(sum(token.startswith("hand:") for token in view_tokens), 1)
+                if view_meta["view_type"] == "omniscient":
+                    self.assertEqual(sum(token.startswith("hand:") for token in view_tokens), 4)
         finally:
             os.remove(temp_path)
 
@@ -313,7 +340,7 @@ HA HJ H6 H3
 
             othello_path = os.path.join(temp_dir, "sample_othello.pgn")
             with open(othello_path, "w", encoding="utf-8") as f:
-                f.write("""[Event "Othello"]\n[Black "B"]\n[White "W"]\n[Result "32-32"]\n\n1. F5 D6 2. C3 F3 3. F4 D3 4. C4 G6 *""")
+                f.write("""[Event "Othello"]\n[Black "B"]\n[White "W"]\n[Result "32-32"]\n\n""" + terminal_othello_pgn())
 
             poker_path = os.path.join(temp_dir, "sample.phh")
             with open(poker_path, "w", encoding="utf-8") as f:
@@ -321,7 +348,7 @@ HA HJ H6 H3
 
             bridge_path = os.path.join(temp_dir, "sample.pbn")
             with open(bridge_path, "w", encoding="utf-8") as f:
-                f.write("""[Event "Bridge"]\n[Date "2025.01.02"]\n[Dealer "N"]\n[Vulnerable "None"]\n[Deal "N:AKQJ.543.2.98765 T987.2.AKQJ.T432 6543.AKQJ.43.AKQ 2.T9876.T98765.J"]\n[Auction "N"]\n1NT Pass 3NT Pass Pass Pass\n[Play "E"]\nHA HJ H6 H3\n""")
+                f.write("""[Event "Bridge"]\n[Date "2025.01.02"]\n[Dealer "N"]\n[Vulnerable "None"]\n[Deal "N:AKQJ.543.2.98765 T987.2.AKQJ.T432 6543.AKQJ.43.AKQ 2.T9876.T98765.J"]\n[Auction "N"]\n1NT Pass 3NT Pass Pass Pass\n[Play "S"]\nHA H9 H5 H2\n""")
 
             cases = {
                 "chess": [chess_path],
@@ -338,7 +365,7 @@ HA HJ H6 H3
                     paths,
                     out_dir,
                     target_tokens=4,
-                    max_tokens_per_shard=100,
+                    max_tokens_per_shard=1000,
                     max_records=1,
                 )
                 self.assertEqual(result["status"], "ready", game)
@@ -383,6 +410,32 @@ HA HJ H6 H3
             self.assertEqual(meta["seat_count"], 2)
             self.assertEqual(meta["view_rows_per_hand"], 4)
             self.assertEqual(meta["private_actions_excluded"], 1)
+        finally:
+            os.remove(temp_path)
+
+    def test_phh_parser_ignores_brackets_inside_action_strings(self):
+        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".phh") as f:
+            f.write('''actions = [
+  "deal_hole P1 AhAd",
+  "deal_hole P2 KcKd",
+  "post_blind P1 50 [small blind]",
+  "post_blind P2 100",
+  "call P1"
+]
+actions = [
+  "deal_hole P1 QhQs",
+  "deal_hole P2 JcJd",
+  "post_blind P1 50",
+  "post_blind P2 100",
+  "call P1"
+]
+''')
+            temp_path = f.name
+        try:
+            hands = list(parse_phh_to_tokens(temp_path))
+            self.assertEqual(len(hands), 8)
+            self.assertTrue(hands[0][1]["view_group_id"].endswith("#1"))
+            self.assertTrue(hands[4][1]["view_group_id"].endswith("#2"))
         finally:
             os.remove(temp_path)
 
@@ -463,6 +516,26 @@ actions = [
             summary = stats.summary()["poker"]["by_seat_count"]["6"]
             self.assertEqual(summary["rows"], 8)
             self.assertEqual(summary["views"], {"complete": 1, "imperfect": 6, "omniscient": 1})
+        finally:
+            os.remove(temp_path)
+
+    def test_bridge_auction_allows_pass_before_redouble(self):
+        mock_pbn = """[Event "Redouble"]
+[Date "2025.01.02"]
+[Dealer "N"]
+[Vulnerable "None"]
+[Deal "N:AKQJ.543.2.98765 T987.2.AKQJ.T432 6543.AKQJ.43.AKQ 2.T9876.T98765.J"]
+[Auction "N"]
+1H X Pass Pass XX Pass Pass Pass
+"""
+        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".pbn") as f:
+            f.write(mock_pbn)
+            temp_path = f.name
+        try:
+            boards = list(parse_pbn_to_tokens(temp_path))
+            self.assertEqual(len(boards), 6)
+            for tokens, meta in boards:
+                validate_entry({"game": "bridge", "tokens": tokens, "metadata": meta})
         finally:
             os.remove(temp_path)
 

@@ -2,6 +2,7 @@ import os
 import gzip
 from pathlib import Path
 import sgfmill.sgf
+import sgfmill.boards
 
 def get_sgf_property(node, name, default="Unknown"):
     """Helper to safely extract SGF properties without raising KeyError."""
@@ -16,6 +17,47 @@ def coords_to_token(coords, board_size):
     col_letter = chr(ord('a') + col)
     row_letter = chr(ord('a') + (board_size - 1 - row))
     return f"{col_letter}{row_letter}"
+
+
+def token_to_coords(token, board_size):
+    col = ord(token[0]) - ord('a')
+    row = board_size - 1 - (ord(token[1]) - ord('a'))
+    return row, col
+
+
+def validate_go_token_sequence(tokens):
+    if len(tokens) < 4 or tokens[0] != "<bos>" or tokens[1] != "<go>" or tokens[-1] != "<eos>":
+        raise ValueError("Invalid Go BOS/game/EOS markers")
+    if not tokens[2].startswith("SZ:"):
+        raise ValueError("Missing Go board size token")
+    board_size = int(tokens[2].split(":", 1)[1])
+    board = sgfmill.boards.Board(board_size)
+    seen_setup = True
+    for token in tokens[3:-1]:
+        if token.startswith(("KM:", "RU:", "HA:")):
+            continue
+        if token.startswith(("AB:", "AW:", "AE:")):
+            if not seen_setup:
+                raise ValueError("Setup tokens after moves are not supported")
+            point = token.split(":", 1)[1]
+            coords = token_to_coords(point, board_size)
+            if token.startswith("AB:"):
+                board.apply_setup([coords], [], [])
+            elif token.startswith("AW:"):
+                board.apply_setup([], [coords], [])
+            else:
+                board.apply_setup([], [], [coords])
+            continue
+        seen_setup = False
+        if token in {"b:pass", "w:pass"}:
+            continue
+        if token.startswith(("b:", "w:")):
+            color, point = token.split(":", 1)
+            row, col = token_to_coords(point, board_size)
+            board.play(row, col, color)
+            continue
+        raise ValueError(f"Invalid Go token: {token}")
+    return True
 
 def parse_sgf_to_tokens(sgf_path):
     """
@@ -43,9 +85,11 @@ def parse_sgf_to_tokens(sgf_path):
         # Extract setup stones before moves. Without these, handicap/setup SGFs
         # become ambiguous or illegal when reconstructed from tokens.
         setup_tokens = []
-        def append_setup_tokens(node):
+        def append_setup_tokens(node, allow_non_root=False):
             if not node.has_setup_stones():
                 return
+            if not allow_non_root and node is not root:
+                raise ValueError("Non-root setup nodes are not accepted")
             black_stones, white_stones, empty_points = node.get_setup_stones()
             for coords in list(black_stones) + list(white_stones) + list(empty_points):
                 row, col = coords
@@ -55,7 +99,7 @@ def parse_sgf_to_tokens(sgf_path):
             setup_tokens.extend(f"AW:{coords_to_token(c, board_size)}" for c in sorted(white_stones))
             setup_tokens.extend(f"AE:{coords_to_token(c, board_size)}" for c in sorted(empty_points))
 
-        append_setup_tokens(root)
+        append_setup_tokens(root, allow_non_root=True)
 
         moves = []
         for node in game.get_main_sequence():
@@ -76,7 +120,13 @@ def parse_sgf_to_tokens(sgf_path):
         if len(moves) < 10:
             return None, None
 
-        tokens = ["<bos>", "<go>", f"SZ:{board_size}"] + setup_tokens + moves + ["<eos>"]
+        context_tokens = [f"SZ:{board_size}"]
+        for prefix, prop in (("KM", "KM"), ("RU", "RU"), ("HA", "HA")):
+            value = get_sgf_property(root, prop, None)
+            if value not in (None, "Unknown", ""):
+                context_tokens.append(f"{prefix}:{str(value).replace(' ', '_')}")
+        tokens = ["<bos>", "<go>"] + context_tokens + setup_tokens + moves + ["<eos>"]
+        validate_go_token_sequence(tokens)
 
         metadata = {
             "black": get_sgf_property(root, "PB", "Unknown"),
@@ -104,7 +154,8 @@ def iter_sgf_files(directory_path):
         if path.name.lower().endswith((".sgf", ".sgf.gz")):
             yield str(path)
         return
-    for root, _, files in os.walk(path):
+    for root, dirs, files in os.walk(path):
+        dirs.sort()
         for name in sorted(files):
             if name.lower().endswith((".sgf", ".sgf.gz")):
                 yield str(Path(root) / name)

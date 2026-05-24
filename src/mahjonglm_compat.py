@@ -22,6 +22,9 @@ DEFAULT_SEAT_COUNTS = {
 
 def _stable_game_id(entry):
     metadata = entry.get("metadata") or {}
+    if metadata.get("view_group_id"):
+        raw = str(metadata["view_group_id"])
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
     raw = "|".join([
         str(entry.get("game", "")),
         str(metadata.get("source_id", "")),
@@ -56,9 +59,7 @@ def tokens_to_mahjonglm_stream(entry):
 
     body = tokens[2:-1]
     rule_token = GAME_RULE_TOKENS[game]
-    if game == "poker":
-        if not body or not body[0].startswith("view_"):
-            raise ValueError("Poker body must start with a view token")
+    if body and body[0].startswith("view_"):
         return [rule_token] + body
     return [rule_token, "view_complete"] + body
 

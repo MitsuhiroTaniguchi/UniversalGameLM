@@ -368,20 +368,34 @@ def _players_from_state_and_actions(state_tokens, actions, private_holes):
         seat = _seat_from_action(action)
         if seat is not None:
             seats.add(seat)
-    for token in state_tokens:
-        if token.startswith("STARTING_STACKS:[") and token.endswith("]"):
-            stacks = [part for part in token[len("STARTING_STACKS:["):-1].split(",") if part]
-            seats.update(range(1, len(stacks) + 1))
     return sorted(seats)
 
 
 def _public_action_token(action):
+    if not _is_supported_public_action(action):
+        if _extract_cards(action):
+            raise ValueError(f"Rejecting unknown card-bearing PHH action: {action}")
+        return None
     sanitized = _sanitize_poker_action(action)
     if not sanitized:
         return None
     if re.match(r"^p\d+_sm_-?$", sanitized):
         return sanitized.replace("_-", "_hidden")
     return sanitized
+
+
+def _is_supported_public_action(action):
+    compact = re.sub(r"\s+", " ", action.strip().lower())
+    return bool(re.match(
+        r"^(?:"
+        r"p\d+ (?:cc|cbr|br|f|fold|check|call|raise|bet|sm|show|muck)\b|"
+        r"(?:call|check|fold|bet|raise) p\d+\b|"
+        r"(?:p\d+_)?(?:post_blind|post_ante|ante|blind)\b|"
+        r"(?:d db|db|deal_board|board)\b|"
+        r"(?:flop|turn|river)\b"
+        r")",
+        compact,
+    ))
 
 
 def _observed_cards_from_public_actions(actions):
@@ -426,6 +440,30 @@ def _complete_private_holes(actions, state_tokens, private_holes):
     return completed, deck
 
 
+def _bracket_delta_outside_strings(line):
+    delta = 0
+    quote = None
+    escaped = False
+    for char in line:
+        if quote:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == quote:
+                quote = None
+            continue
+        if char in {"'", '"'}:
+            quote = char
+        elif char == "#":
+            break
+        elif char == "[":
+            delta += 1
+        elif char == "]":
+            delta -= 1
+    return delta
+
+
 def poker_view_entries(actions, state_tokens):
     private_holes = {}
     public_actions = []
@@ -434,6 +472,8 @@ def poker_view_entries(actions, state_tokens):
         private = _private_hole_from_action(action)
         if private is not None:
             seat, cards = private
+            if seat in private_holes:
+                raise ValueError(f"Duplicate private deal for seat p{seat}")
             private_holes[seat] = cards
             private_excluded += 1
             continue
@@ -507,7 +547,7 @@ def iter_phh_action_lists(phh_path):
                 if re.match(r"^actions\s*=", line.strip()):
                     in_actions = True
                     action_lines = [line]
-                    bracket_depth = line.count("[") - line.count("]")
+                    bracket_depth = _bracket_delta_outside_strings(line)
                     if bracket_depth <= 0:
                         text = "".join(state_lines + action_lines)
                         actions = _extract_actions_literals(text)
@@ -521,7 +561,7 @@ def iter_phh_action_lists(phh_path):
                 continue
 
             action_lines.append(line)
-            bracket_depth += line.count("[") - line.count("]")
+            bracket_depth += _bracket_delta_outside_strings(line)
             if bracket_depth <= 0:
                 text = "".join(state_lines + action_lines)
                 actions = _extract_actions_literals(text)
@@ -537,7 +577,8 @@ def iter_phh_files(input_path):
         if path.name.lower().endswith((".phh", ".phhs")):
             yield str(path)
         return
-    for root, _, files in os.walk(path):
+    for root, dirs, files in os.walk(path):
+        dirs.sort()
         for name in sorted(files):
             if name.lower().endswith((".phh", ".phhs")):
                 yield str(Path(root) / name)
@@ -556,7 +597,11 @@ def parse_phh_to_tokens(phh_path, max_hands=None):
     parsed = 0
     for source_file in iter_phh_files(phh_path):
         for actions, state_tokens in iter_phh_action_lists(source_file):
-            view_entries = poker_view_entries(actions, state_tokens)
+            try:
+                view_entries = poker_view_entries(actions, state_tokens)
+            except ValueError as exc:
+                print(f"[Warning] Skipping invalid PHH hand in {os.path.basename(source_file)}: {exc}")
+                continue
             if not view_entries:
                 continue
 

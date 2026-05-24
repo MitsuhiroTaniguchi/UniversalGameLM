@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import gzip
 from pathlib import Path
 
 
@@ -82,7 +83,10 @@ def validate_othello_moves(moves):
             if remaining:
                 raise ValueError("Moves after double pass are not allowed")
             break
-    return [PASS_TOKEN if move in ("pa", "pass") else move for move in moves]
+    canonical_moves = [PASS_TOKEN if move in ("pa", "pass") else move for move in moves]
+    if legal_moves(board, "B") or legal_moves(board, "W"):
+        raise ValueError("Othello game is not terminal")
+    return canonical_moves
 
 
 def _parse_headers(block):
@@ -127,7 +131,8 @@ def parse_othello_pgn_to_tokens(pgn_path, max_games=None):
 
     games_parsed = 0
     current = []
-    with open(pgn_path, "r", encoding="utf-8", errors="ignore") as f:
+    opener = gzip.open if str(pgn_path).lower().endswith(".gz") else open
+    with opener(pgn_path, "rt", encoding="utf-8", errors="ignore") as f:
         for line in f:
             if line.startswith("[Event ") and current:
                 yielded = _parse_othello_block("".join(current), pgn_path)
@@ -171,20 +176,35 @@ def _parse_othello_block(block, source_path):
 
 def _int_to_square(value):
     value = int(value)
+    if value < 0:
+        return None
+    if value in (64, 65):
+        return PASS_TOKEN
     if not 0 <= value < 64:
         raise ValueError(f"Othello integer move out of range: {value}")
     return f"{chr(ord('a') + value % 8)}{value // 8 + 1}"
 
 
+def _moves_from_row_values(values):
+    moves = []
+    for value in values:
+        move = _int_to_square(value) if isinstance(value, int) else str(value).lower()
+        if move in (None, "", "nan", "none", "pad"):
+            continue
+        moves.append(move)
+    return moves
+
+
 def parse_othello_jsonl_to_tokens(jsonl_path, max_games=None):
     parsed = 0
-    with open(jsonl_path, "r", encoding="utf-8") as f:
+    opener = gzip.open if str(jsonl_path).lower().endswith(".gz") else open
+    with opener(jsonl_path, "rt", encoding="utf-8") as f:
         for line_number, line in enumerate(f, 1):
             row = json.loads(line)
             values = row.get("moves") or row.get("games") or row.get("seqs") or row.get("sequence")
             if values is None:
                 continue
-            moves = [_int_to_square(v) if isinstance(v, int) else str(v).lower() for v in values]
+            moves = _moves_from_row_values(values)
             try:
                 tokens = tokens_from_othello_moves(moves)
             except ValueError:
@@ -210,7 +230,7 @@ def parse_othello_hf_dataset(dataset_id, split="train", max_games=None):
         values = row.get("moves") or row.get("games") or row.get("seqs") or row.get("sequence")
         if values is None:
             continue
-        moves = [_int_to_square(v) if isinstance(v, int) else str(v).lower() for v in values]
+        moves = _moves_from_row_values(values)
         try:
             tokens = tokens_from_othello_moves(moves)
         except ValueError:
@@ -224,3 +244,63 @@ def parse_othello_hf_dataset(dataset_id, split="train", max_games=None):
         }
         if max_games and parsed >= max_games:
             break
+
+
+def parse_othello_parquet_to_tokens(parquet_path, max_games=None):
+    from datasets import load_dataset
+
+    parsed = 0
+    ds = load_dataset("parquet", data_files=str(parquet_path), split="train", streaming=True)
+    for row_number, row in enumerate(ds, 1):
+        values = row.get("moves") or row.get("games") or row.get("seqs") or row.get("sequence")
+        if values is None:
+            continue
+        moves = _moves_from_row_values(values)
+        try:
+            tokens = tokens_from_othello_moves(moves)
+        except ValueError:
+            continue
+        parsed += 1
+        yield tokens, {
+            "source": "othello_parquet",
+            "filename": os.path.basename(parquet_path),
+            "row": row_number,
+            "move_count": len(tokens) - 3,
+            "seat_count": 2,
+            "view_type": "complete",
+            "viewer_seat": None,
+            "source_path": str(Path(parquet_path).resolve()),
+        }
+        if max_games and parsed >= max_games:
+            break
+
+
+def parse_othello_inputs(input_path, max_games=None):
+    path = Path(input_path)
+    files = []
+    if path.is_file():
+        files = [path]
+    else:
+        for root, dirs, names in os.walk(path):
+            dirs.sort()
+            for name in sorted(names):
+                if name.lower().endswith((".pgn", ".pgn.gz", ".jsonl", ".jsonl.gz", ".parquet")):
+                    files.append(Path(root) / name)
+    parsed = 0
+    for file_path in files:
+        remaining = None if max_games is None else max_games - parsed
+        if remaining is not None and remaining <= 0:
+            break
+        lower = file_path.name.lower()
+        if lower.endswith((".jsonl", ".jsonl.gz")):
+            iterator = parse_othello_jsonl_to_tokens(str(file_path), max_games=remaining)
+        elif lower.endswith(".parquet"):
+            iterator = parse_othello_parquet_to_tokens(str(file_path), max_games=remaining)
+        else:
+            iterator = parse_othello_pgn_to_tokens(str(file_path), max_games=remaining)
+        for tokens, metadata in iterator:
+            parsed += 1
+            metadata.setdefault("seat_count", 2)
+            metadata.setdefault("view_type", "complete")
+            metadata.setdefault("viewer_seat", None)
+            yield tokens, metadata

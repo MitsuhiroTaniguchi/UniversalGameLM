@@ -9,6 +9,7 @@ RANKS = "AKQJT98765432"
 ALL_CARDS = {f"{s}{r}" for s in SUITS for r in RANKS}
 CALL_RE = re.compile(r"^(?:PASS|P|X|XX|DBL|RDBL|[1-7](?:C|D|H|S|N|NT))$", re.IGNORECASE)
 CARD_RE = re.compile(r"^[SHDC][AKQJT98765432]$", re.IGNORECASE)
+STRAIN_ORDER = {"C": 0, "D": 1, "H": 2, "S": 3, "N": 4}
 
 
 def _canonical_call(raw):
@@ -86,6 +87,13 @@ def _find_section_lines(block, section_name):
     return section_lines
 
 
+def _section_starter(tags, name, fallback=None):
+    value = tags.get(name)
+    if value and value.upper() in SEATS:
+        return value.upper()
+    return fallback
+
+
 def _parse_auction(block, tags):
     auction_lines = _find_section_lines(block, "Auction")
     if not auction_lines:
@@ -106,6 +114,53 @@ def _parse_auction(block, tags):
     return calls
 
 
+def _bid_rank(call):
+    return int(call[0]), STRAIN_ORDER[call[1]]
+
+
+def _validate_auction(calls, dealer):
+    if dealer not in SEATS:
+        raise ValueError("Bridge auction requires a valid dealer")
+    highest_bid = None
+    highest_bid_side = None
+    contract_status = None
+    consecutive_passes = 0
+    ended = False
+    for index, call in enumerate(calls):
+        if ended:
+            raise ValueError("Call after auction termination")
+        seat = SEATS[(SEATS.index(dealer) + index) % 4]
+        side = seat in ("N", "S")
+        if call == "PASS":
+            consecutive_passes += 1
+            if highest_bid is None and consecutive_passes == 4:
+                ended = True
+            elif highest_bid is not None and consecutive_passes == 3:
+                ended = True
+            continue
+        consecutive_passes = 0
+        if call in {"X", "XX"}:
+            if highest_bid is None:
+                raise ValueError("Double/redouble before any bid")
+            if call == "X":
+                if highest_bid_side == side or contract_status is not None:
+                    raise ValueError("Illegal double")
+                contract_status = "X"
+            elif contract_status != "X" or highest_bid_side != side:
+                raise ValueError("Illegal redouble")
+            else:
+                contract_status = "XX"
+            continue
+        if highest_bid is not None and _bid_rank(call) <= _bid_rank(highest_bid):
+            raise ValueError("Bridge bids must increase")
+        highest_bid = call
+        highest_bid_side = side
+        contract_status = None
+    if calls and not ended:
+        raise ValueError("Auction is not terminated")
+    return True
+
+
 def _parse_play(block, tags):
     play_lines = _find_section_lines(block, "Play")
     if not play_lines:
@@ -124,37 +179,68 @@ def _parse_play(block, tags):
     return cards
 
 
+def _validate_play(played_cards, hands, leader):
+    if not played_cards:
+        return True
+    if leader not in SEATS:
+        raise ValueError("Bridge play requires a valid opening leader")
+    if len(played_cards) % 4 != 0:
+        raise ValueError("Bridge play must contain complete tricks")
+    remaining = {seat: set(cards) for seat, cards in hands.items()}
+    current_leader = leader
+    for trick_start in range(0, len(played_cards), 4):
+        trick_cards = played_cards[trick_start:trick_start + 4]
+        led_suit = trick_cards[0][0]
+        trick = []
+        for offset, card in enumerate(trick_cards):
+            seat = SEATS[(SEATS.index(current_leader) + offset) % 4]
+            if card not in remaining[seat]:
+                raise ValueError(f"{seat} cannot play {card}")
+            if card[0] != led_suit and any(c[0] == led_suit for c in remaining[seat]):
+                raise ValueError(f"{seat} revoked on {card}")
+            remaining[seat].remove(card)
+            trick.append((seat, card))
+        current_leader = min(
+            (item for item in trick if item[1][0] == led_suit),
+            key=lambda item: RANKS.index(item[1][1]),
+        )[0]
+    return True
+
+
 def _bridge_block_to_tokens(block, source_path):
     tags = _parse_tags(block)
     if "Deal" not in tags:
         return None
     hands = _parse_deal(tags["Deal"])
+    dealer = tags.get("Dealer", "").upper()
+    auction_starter = _section_starter(tags, "Auction", dealer)
     calls = _parse_auction(block, tags)
+    _validate_auction(calls, auction_starter)
     played_cards = _parse_play(block, tags)
+    play_starter = _section_starter(tags, "Play", None)
+    _validate_play(played_cards, hands, play_starter)
     if len(calls) < 4 and not played_cards:
         return None
 
-    tokens = ["<bos>", "<bridge>", "view_complete"]
+    context_tokens = []
     dealer = tags.get("Dealer")
     if dealer:
-        tokens.append(f"dealer:{dealer.upper()}")
+        context_tokens.append(f"dealer:{dealer.upper()}")
     vulnerable = tags.get("Vulnerable")
     if vulnerable:
-        tokens.append(f"vul:{vulnerable.upper().replace(' ', '_')}")
+        context_tokens.append(f"vul:{vulnerable.upper().replace(' ', '_')}")
     contract = tags.get("Contract")
     if contract:
-        tokens.append(f"contract:{contract.upper().replace(' ', '_')}")
+        context_tokens.append(f"contract:{contract.upper().replace(' ', '_')}")
     declarer = tags.get("Declarer")
     if declarer:
-        tokens.append(f"declarer:{declarer.upper()}")
+        context_tokens.append(f"declarer:{declarer.upper()}")
+    if play_starter:
+        context_tokens.append(f"play_leader:{play_starter}")
+    context_tokens.extend(f"bid:{call}" for call in calls)
+    context_tokens.extend(f"play:{card}" for card in played_cards)
 
-    for seat in SEATS:
-        tokens.append(f"hand:{seat}:{''.join(hands[seat])}")
-    tokens.extend(f"bid:{call}" for call in calls)
-    tokens.extend(f"play:{card}" for card in played_cards)
-    tokens.append("<eos>")
-
-    metadata = {
+    base_metadata = {
         "event": tags.get("Event", "Unknown"),
         "site": tags.get("Site", "Unknown"),
         "date": tags.get("Date", "????.??.??"),
@@ -169,8 +255,23 @@ def _bridge_block_to_tokens(block, source_path):
         "viewer_seat": None,
         "move_count": len(calls) + len(played_cards),
         "source_path": str(Path(source_path).resolve()),
+        "bridge_auction_validated": True,
+        "bridge_play_validated": True,
     }
-    return tokens, metadata
+    entries = [
+        (["<bos>", "<bridge>", "view_complete"] + context_tokens + ["<eos>"], base_metadata)
+    ]
+    for seat in SEATS:
+        entries.append((
+            ["<bos>", "<bridge>", f"view_imperfect_{seat}", f"hand:{seat}:{''.join(hands[seat])}"] + context_tokens + ["<eos>"],
+            {**base_metadata, "view_type": "imperfect", "viewer_seat": seat},
+        ))
+    omni_hands = [f"hand:{seat}:{''.join(hands[seat])}" for seat in SEATS]
+    entries.append((
+        ["<bos>", "<bridge>", "view_omniscient"] + omni_hands + context_tokens + ["<eos>"],
+        {**base_metadata, "view_type": "omniscient", "viewer_seat": None},
+    ))
+    return entries
 
 
 def iter_pbn_files(input_path):
@@ -179,7 +280,8 @@ def iter_pbn_files(input_path):
         if path.name.lower().endswith(".pbn"):
             yield str(path)
         return
-    for root, _, files in os.walk(path):
+    for root, dirs, files in os.walk(path):
+        dirs.sort()
         for name in sorted(files):
             if name.lower().endswith(".pbn"):
                 yield str(Path(root) / name)
@@ -190,23 +292,37 @@ def parse_pbn_to_tokens(pbn_path, max_games=None):
         print(f"[Error] Bridge PBN file not found: {pbn_path}")
         return
     parsed = 0
-    with open(pbn_path, "r", encoding="utf-8", errors="ignore") as f:
-        content = f.read()
-    blocks = re.split(r"\n\s*\n(?=\[)", content)
-    for block in blocks:
+    current = []
+
+    def emit_block(block):
         if not block.strip():
-            continue
+            return None
         try:
-            parsed_entry = _bridge_block_to_tokens(block, pbn_path)
+            return _bridge_block_to_tokens(block, pbn_path)
         except ValueError as exc:
             print(f"[Warning] Skipping invalid bridge board in {os.path.basename(pbn_path)}: {exc}")
-            continue
-        if parsed_entry is None:
-            continue
-        parsed += 1
-        yield parsed_entry
-        if max_games and parsed >= max_games:
-            return
+            return None
+
+    with open(pbn_path, "r", encoding="utf-8", errors="strict") as f:
+        for line in f:
+            if line.startswith("[Event ") and current:
+                entries = emit_block("".join(current))
+                current = []
+                if entries is not None:
+                    parsed += 1
+                    for tokens, metadata in entries:
+                        metadata = {**metadata, "hand_index": parsed, "view_group_id": f"{Path(pbn_path).resolve()}#{parsed}"}
+                        yield tokens, metadata
+                    if max_games and parsed >= max_games:
+                        return
+            current.append(line)
+    if current:
+        entries = emit_block("".join(current))
+        if entries is not None:
+            parsed += 1
+            for tokens, metadata in entries:
+                metadata = {**metadata, "hand_index": parsed, "view_group_id": f"{Path(pbn_path).resolve()}#{parsed}"}
+                yield tokens, metadata
 
 
 def parse_bridge_inputs(input_path, max_games=None):

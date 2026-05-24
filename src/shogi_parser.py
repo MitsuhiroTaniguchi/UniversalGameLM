@@ -47,10 +47,17 @@ def _setup_tokens(csa_text):
         if line.startswith("P"):
             explicit_position = True
     if explicit_position:
-        tokens.append("SETUP:explicit_csa")
+        raise ValueError("Explicit CSA setup is not serialized; reject non-PI starts")
     if side_to_move:
         tokens.append(f"TURN:{side_to_move}")
     return tokens
+
+
+def _date_from_csa(csa_text):
+    for line in csa_text.splitlines():
+        if line.startswith("$START_TIME:"):
+            return line.split(":", 1)[1][:10].replace("/", ".").replace("-", ".")
+    return None
 
 def parse_csa_to_tokens(csa_path):
     """
@@ -65,6 +72,8 @@ def parse_csa_to_tokens(csa_path):
         csa_text = _read_csa_text(csa_path)
         terminal_reason, terminal_marker = _terminal_reason(csa_text)
         if terminal_reason is None:
+            return None, None
+        if terminal_reason in {"illegal_move", "interrupted"}:
             return None, None
 
         parser = cshogi.Parser()
@@ -94,6 +103,7 @@ def parse_csa_to_tokens(csa_path):
             "winner": winner,
             "terminal": terminal_reason,
             "terminal_marker": terminal_marker,
+            "date": _date_from_csa(csa_text),
             "move_count": len(usi_moves),
             "filename": os.path.basename(csa_path),
             "source_path": str(Path(csa_path).resolve()),
@@ -120,9 +130,12 @@ def iter_csa_files(directory_path):
                 yield from iter_csa_files(temp_dir)
         return
 
-    for root, _, files in os.walk(path):
+    for root, dirs, files in os.walk(path):
+        dirs.sort()
         for name in sorted(files):
             if name.lower().endswith((".csa", ".csa.xz")):
+                yield str(Path(root) / name)
+            elif name.lower().endswith(".7z"):
                 yield str(Path(root) / name)
 
 

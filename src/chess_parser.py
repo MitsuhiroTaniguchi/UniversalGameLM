@@ -43,7 +43,8 @@ class _ClosingTextWrapper:
 def iter_chess_inputs(input_path):
     path = Path(input_path)
     if path.is_dir():
-        for root, _, files in os.walk(path):
+        for root, dirs, files in os.walk(path):
+            dirs.sort()
             for name in sorted(files):
                 lower = name.lower()
                 if lower.endswith((".pgn", ".pgn.gz", ".pgn.zst")):
@@ -125,6 +126,7 @@ def parse_pgn_to_tokens(pgn_path, max_games=None):
                 "variant": game.headers.get("Variant", "standard"),
                 "fen": game.headers.get("FEN") if game.headers.get("SetUp") == "1" else None,
                 "source_path": str(Path(pgn_path).resolve()),
+                "game_index": games_parsed + 1,
             }
             
             yield tokens, metadata
