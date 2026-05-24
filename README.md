@@ -13,6 +13,12 @@ The default target is `3_000_000_000` move tokens per game. A game is not marked
 
 Primary source plan lives in `source_catalog.json`.
 
+Install parser/runtime dependencies before production runs:
+
+```bash
+python3 -m pip install -r requirements.txt
+```
+
 ## Build Shards
 
 Example:
@@ -45,8 +51,20 @@ The production path validates every serialized row:
 - sequence starts with `<bos>` and ends with `<eos>`
 - game marker matches the selected game
 - empty/non-string tokens are rejected
-- poker private hole-card tokens are rejected
-- shard files are closed before upload/delete
+- chess PGN parser errors and illegal move streams are rejected
+- shogi requires valid USI moves and explicit terminal reason tokens
+- Go requires `SZ:*`, in-range coordinates, and rejects SGF variations
+- Othello move streams are replayed against an 8x8 board for legality
+- poker private hole-card deal tokens are rejected, including canonical PHH `d dh`
+- shards are written to temporary files, atomically renamed, and reported with checksums before upload/delete
+
+Supported production input forms include:
+
+- chess: `.pgn`, `.pgn.gz`, `.pgn.zst`, or directories containing those files
+- shogi: `.csa`, `.csa.xz`, `.7z` with `py7zr`, or directories containing `.csa`/`.csa.xz`
+- Go: `.sgf`, `.sgf.gz`, or directories containing those files
+- Othello: PGN/WTHOR text, local JSONL rows with `moves`/`games`/`seqs`, or `hf://dataset_id[:split]`
+- poker: `.phh`, `.phhs`, or directories containing those files
 
 Run tests before any production job:
 

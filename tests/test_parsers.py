@@ -39,6 +39,21 @@ class TestUniversalGameParsers(unittest.TestCase):
         finally:
             os.remove(temp_path)
 
+    def test_chess_parser_rejects_illegal_pgn(self):
+        mock_pgn = """[Event "Broken"]
+[White "Player1"]
+[Black "Player2"]
+[Result "*"]
+
+1. e4 e5 2. Nf3 Nc6 3. Qh5 Qh4 4. Qxh4 *"""
+        with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
+            f.write(mock_pgn)
+            temp_path = f.name
+        try:
+            self.assertEqual(list(parse_pgn_to_tokens(temp_path)), [])
+        finally:
+            os.remove(temp_path)
+
     def test_go_parser(self):
         # Create a mock SGF with 10 moves to pass the quality filter
         mock_sgf = "(;PB[BlackPlayer]PW[WhitePlayer]RE[B+R];B[pd];W[dd];B[pp];W[dp];B[cf];W[ch];B[fd];W[df];B[dg];W[cg])"
@@ -75,6 +90,18 @@ class TestUniversalGameParsers(unittest.TestCase):
         finally:
             os.remove(temp_path)
 
+    def test_go_parser_rejects_variations(self):
+        mock_sgf = "(;SZ[19];B[pd](;W[dd];B[pp];W[dp];B[cf];W[ch];B[fd];W[df];B[dg];W[cg])(;W[qq]))"
+        with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
+            f.write(mock_sgf)
+            temp_path = f.name
+        try:
+            tokens, meta = parse_sgf_to_tokens(temp_path)
+            self.assertIsNone(tokens)
+            self.assertIsNone(meta)
+        finally:
+            os.remove(temp_path)
+
     def test_othello_parser(self):
         # Create a mock Othello PGN with 8 moves to pass the quality filter
         mock_pgn = """[Event "Othello Match"]
@@ -100,6 +127,13 @@ class TestUniversalGameParsers(unittest.TestCase):
             self.assertEqual(meta["black"], "PlayerB")
         finally:
             os.remove(temp_path)
+
+    def test_othello_validation_rejects_duplicate_or_illegal_moves(self):
+        with self.assertRaises(ProductionDatasetError):
+            validate_entry({
+                "game": "othello",
+                "tokens": ["<bos>", "<othello>", "f5", "f5", "c3", "d3", "<eos>"],
+            })
 
     def test_poker_simulator(self):
         simulator = PokerHandSimulator()
@@ -231,6 +265,8 @@ class TestUniversalGameParsers(unittest.TestCase):
             "H:1:AhAd",
             "hole_p1_ahad",
             "deal_hole_p1_ahad",
+            "d_dh_p1_ahad",
+            "dh_p1_ahad",
             "show_or_muck_hole_cards_p1_ahad",
         ]
         for token in private_tokens:
@@ -251,6 +287,53 @@ class TestUniversalGameParsers(unittest.TestCase):
             self.assertNotIn("deal_hole_p1_ahad", tokens)
             self.assertEqual(tokens[2:], ["post_blind_p1_50", "post_blind_p2_100", "call_p1", "<eos>"])
             self.assertEqual(meta["private_actions_excluded"], 1)
+        finally:
+            os.remove(temp_path)
+
+    def test_phh_parser_handles_canonical_single_quoted_actions_and_directories(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            phh_dir = os.path.join(temp_dir, "hands")
+            os.makedirs(phh_dir)
+            phh_path = os.path.join(phh_dir, "sample.phhs")
+            with open(phh_path, "w", encoding="utf-8") as f:
+                f.write("""variant = 'NT'
+blinds_or_straddles = [50, 100]
+starting_stacks = [10000, 10000]
+actions = [
+  'd dh p1 AhAd',
+  'd dh p2 KcKd',
+  'p1 cc',
+  'p2 cbr 300',
+  'p1 cc',
+  'd db 2c3d4h',
+  'p1 sm -',
+]
+""")
+            hands = list(parse_phh_to_tokens(phh_dir))
+            self.assertEqual(len(hands), 1)
+            tokens, meta = hands[0]
+            self.assertIn("VARIANT:nt", tokens)
+            self.assertIn("p1_cc", tokens)
+            self.assertIn("p2_cbr_300", tokens)
+            self.assertIn("p1_sm_hidden", tokens)
+            self.assertFalse(any("ahad" in token or "kckd" in token for token in tokens))
+            self.assertEqual(meta["private_actions_excluded"], 2)
+
+    def test_shogi_parser_rejects_missing_terminal(self):
+        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".csa") as f:
+            f.write("""V2.2
+N+Black
+N-White
+PI
++
++7776FU
+-3334FU
+""")
+            temp_path = f.name
+        try:
+            tokens, meta = parse_csa_to_tokens(temp_path)
+            self.assertIsNone(tokens)
+            self.assertIsNone(meta)
         finally:
             os.remove(temp_path)
 

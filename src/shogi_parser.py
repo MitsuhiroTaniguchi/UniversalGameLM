@@ -1,6 +1,56 @@
 import os
-import glob
+import lzma
+import tempfile
+from pathlib import Path
 import cshogi
+
+
+TERMINAL_MARKERS = {
+    "%TORYO": "resign",
+    "%SENNICHITE": "repetition",
+    "%JISHOGI": "impasse",
+    "%TIME_UP": "time_up",
+    "%ILLEGAL_MOVE": "illegal_move",
+    "%KACHI": "declaration_win",
+    "%HIKIWAKE": "draw",
+    "%CHUDAN": "interrupted",
+}
+
+
+def _read_csa_text(csa_path):
+    path = Path(csa_path)
+    if "".join(path.suffixes[-2:]).lower() == ".csa.xz" or path.suffix.lower() == ".xz":
+        with lzma.open(csa_path, "rt", encoding="utf-8", errors="ignore") as f:
+            return f.read()
+    with open(csa_path, "r", encoding="utf-8", errors="ignore") as f:
+        return f.read()
+
+
+def _terminal_reason(csa_text):
+    for line in reversed(csa_text.splitlines()):
+        marker = line.strip().split(",", 1)[0]
+        if marker in TERMINAL_MARKERS:
+            return TERMINAL_MARKERS[marker], marker
+    return None, None
+
+
+def _setup_tokens(csa_text):
+    tokens = []
+    explicit_position = False
+    side_to_move = None
+    for line in csa_text.splitlines():
+        line = line.strip()
+        if line == "+" or line == "-":
+            side_to_move = "black" if line == "+" else "white"
+        if line.startswith("PI"):
+            continue
+        if line.startswith("P"):
+            explicit_position = True
+    if explicit_position:
+        tokens.append("SETUP:explicit_csa")
+    if side_to_move:
+        tokens.append(f"TURN:{side_to_move}")
+    return tokens
 
 def parse_csa_to_tokens(csa_path):
     """
@@ -12,17 +62,24 @@ def parse_csa_to_tokens(csa_path):
         return None, None
 
     try:
+        csa_text = _read_csa_text(csa_path)
+        terminal_reason, terminal_marker = _terminal_reason(csa_text)
+        if terminal_reason is None:
+            return None, None
+
         parser = cshogi.Parser()
-        parser.parse_csa_file(csa_path)
+        parser.parse_csa_str(csa_text)
         
         # Convert move integers to USI strings
         usi_moves = [cshogi.move_to_usi(m) for m in parser.moves]
+        if any(move in (None, "None", "") for move in usi_moves):
+            return None, None
         
         # Quality Filter: Skip extremely short or empty games
         if len(usi_moves) < 10:
             return None, None
 
-        tokens = ["<bos>", "<shogi>"] + usi_moves + ["<eos>"]
+        tokens = ["<bos>", "<shogi>"] + _setup_tokens(csa_text) + usi_moves + [f"END:{terminal_reason}", "<eos>"]
         
         # Determine winner
         winner = "Draw"
@@ -35,8 +92,11 @@ def parse_csa_to_tokens(csa_path):
             "black": parser.names[0] if len(parser.names) > 0 else "Unknown",
             "white": parser.names[1] if len(parser.names) > 1 else "Unknown",
             "winner": winner,
+            "terminal": terminal_reason,
+            "terminal_marker": terminal_marker,
             "move_count": len(usi_moves),
-            "filename": os.path.basename(csa_path)
+            "filename": os.path.basename(csa_path),
+            "source_path": str(Path(csa_path).resolve()),
         }
         
         return tokens, metadata
@@ -44,17 +104,36 @@ def parse_csa_to_tokens(csa_path):
         print(f"[Warning] Failed to parse {os.path.basename(csa_path)}: {e}")
         return None, None
 
+def iter_csa_files(directory_path):
+    path = Path(directory_path)
+    if path.is_file():
+        if path.name.lower().endswith((".csa", ".csa.xz")):
+            yield str(path)
+        elif path.name.lower().endswith(".7z"):
+            try:
+                import py7zr
+            except ImportError as exc:
+                raise RuntimeError("Reading .7z CSA archives requires py7zr") from exc
+            with tempfile.TemporaryDirectory() as temp_dir:
+                with py7zr.SevenZipFile(path, mode="r") as archive:
+                    archive.extractall(path=temp_dir)
+                yield from iter_csa_files(temp_dir)
+        return
+
+    for root, _, files in os.walk(path):
+        for name in sorted(files):
+            if name.lower().endswith((".csa", ".csa.xz")):
+                yield str(Path(root) / name)
+
+
 def parse_shogi_directory(directory_path, max_games=None):
     """
     Parses all CSA files in a directory and yields token sequences.
     """
-    csa_pattern = os.path.join(directory_path, "**", "*.csa")
-    csa_files = glob.glob(csa_pattern, recursive=True)
-    
-    print(f"[Parsing Shogi] Found {len(csa_files)} CSA files in {directory_path}...")
+    print(f"[Parsing Shogi] Streaming CSA files from {directory_path}...")
     
     games_parsed = 0
-    for filepath in csa_files:
+    for filepath in iter_csa_files(directory_path):
         tokens, metadata = parse_csa_to_tokens(filepath)
         if tokens is not None:
             games_parsed += 1

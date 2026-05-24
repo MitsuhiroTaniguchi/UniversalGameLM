@@ -2,6 +2,8 @@ import os
 import random
 import collections
 import re
+import ast
+from pathlib import Path
 
 # Card representation: Values 2-A, Suits h, d, c, s
 VALUES = "23456789TJQKA"
@@ -244,44 +246,128 @@ def generate_poker_dataset(n_hands=100):
     print(f"[Success] Generated {n_hands} simulated Poker hands.")
 
 def _sanitize_poker_action(action):
-    return re.sub(r"\s+", "_", action.strip().lower())
+    action = re.sub(r"#.*$", "", action.strip())
+    action = re.sub(r"\s+", "_", action.lower())
+    return re.sub(r"[^a-z0-9_:\-.]+", "", action)
 
 def _is_public_phh_action(action):
     normalized = action.strip().lower()
-    private_prefixes = (
-        "deal_hole",
-        "dh ",
-        "hole",
-        "show_or_muck_hole_cards",
+    compact = re.sub(r"\s+", " ", normalized)
+    private_patterns = (
+        r"^deal_hole\b",
+        r"^hole\b",
+        r"^dh\b",
+        r"^d dh\b",
+        r"^d\.dh\b",
+        r"^show_or_muck_hole_cards\b",
     )
-    return not normalized.startswith(private_prefixes)
+    return not any(re.match(pattern, compact) for pattern in private_patterns)
+
+
+def _parse_phh_scalar(text, name):
+    match = re.search(rf"^{re.escape(name)}\s*=\s*(.+)$", text, flags=re.MULTILINE)
+    if not match:
+        return None
+    value = match.group(1).split("#", 1)[0].strip().rstrip(",")
+    try:
+        return ast.literal_eval(value)
+    except Exception:
+        return value.strip("\"'")
+
+
+def _extract_actions_literals(text):
+    match = re.search(r"^actions\s*=\s*\[", text, flags=re.MULTILINE)
+    if not match:
+        return []
+    start = match.end() - 1
+    depth = 0
+    quote = None
+    escaped = False
+    for index in range(start, len(text)):
+        char = text[index]
+        if quote:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == quote:
+                quote = None
+            continue
+        if char in ("'", '"'):
+            quote = char
+        elif char == "[":
+            depth += 1
+        elif char == "]":
+            depth -= 1
+            if depth == 0:
+                literal = text[start:index + 1]
+                try:
+                    actions = ast.literal_eval(literal)
+                except Exception:
+                    return []
+                return [str(a) for a in actions]
+    return []
+
+
+def _phh_state_tokens(text):
+    tokens = []
+    for field in ("variant", "ante_trimming_status", "betting_type"):
+        value = _parse_phh_scalar(text, field)
+        if value is not None:
+            tokens.append(f"{field.upper()}:{str(value).lower().replace(' ', '_')}")
+    for field in ("antes", "blinds_or_straddles", "min_bet", "starting_stacks"):
+        value = _parse_phh_scalar(text, field)
+        if value is not None:
+            compact = re.sub(r"\s+", "", repr(value).lower())
+            tokens.append(f"{field.upper()}:{compact}")
+    return tokens
 
 def iter_phh_action_lists(phh_path):
     """Streams PHH action arrays without loading the whole file."""
+    state_lines = []
+    action_lines = []
     in_actions = False
-    current = []
     bracket_depth = 0
-
     with open(phh_path, "r", encoding="utf-8", errors="ignore") as f:
         for line in f:
-            stripped = line.strip()
             if not in_actions:
-                if re.match(r"^actions\s*=", stripped):
+                if re.match(r"^actions\s*=", line.strip()):
                     in_actions = True
-                    current = [line]
+                    action_lines = [line]
                     bracket_depth = line.count("[") - line.count("]")
                     if bracket_depth <= 0:
-                        text = "".join(current)
-                        yield re.findall(r'"([^"]+)"', text)
+                        text = "".join(state_lines + action_lines)
+                        actions = _extract_actions_literals(text)
+                        if actions:
+                            yield actions, _phh_state_tokens(text)
+                        state_lines = []
+                        action_lines = []
                         in_actions = False
+                else:
+                    state_lines.append(line)
                 continue
 
-            current.append(line)
+            action_lines.append(line)
             bracket_depth += line.count("[") - line.count("]")
             if bracket_depth <= 0:
-                text = "".join(current)
-                yield re.findall(r'"([^"]+)"', text)
+                text = "".join(state_lines + action_lines)
+                actions = _extract_actions_literals(text)
+                if actions:
+                    yield actions, _phh_state_tokens(text)
+                state_lines = []
+                action_lines = []
                 in_actions = False
+
+def iter_phh_files(input_path):
+    path = Path(input_path)
+    if path.is_file():
+        if path.name.lower().endswith((".phh", ".phhs")):
+            yield str(path)
+        return
+    for root, _, files in os.walk(path):
+        for name in sorted(files):
+            if name.lower().endswith((".phh", ".phhs")):
+                yield str(Path(root) / name)
 
 def parse_phh_to_tokens(phh_path, max_hands=None):
     """
@@ -295,23 +381,37 @@ def parse_phh_to_tokens(phh_path, max_hands=None):
         return
 
     parsed = 0
-    for actions in iter_phh_action_lists(phh_path):
-        public_actions = [_sanitize_poker_action(a) for a in actions if _is_public_phh_action(a)]
-        if len(public_actions) < 2:
-            continue
+    for source_file in iter_phh_files(phh_path):
+        for actions, state_tokens in iter_phh_action_lists(source_file):
+            public_actions = []
+            private_excluded = 0
+            for action in actions:
+                if not _is_public_phh_action(action):
+                    private_excluded += 1
+                    continue
+                sanitized = _sanitize_poker_action(action)
+                if not sanitized:
+                    continue
+                if re.match(r"^p\d+_sm_-?$", sanitized):
+                    sanitized = sanitized.replace("_-", "_hidden")
+                public_actions.append(sanitized)
 
-        parsed += 1
-        tokens = ["<bos>", "<poker>"] + public_actions + ["<eos>"]
-        metadata = {
-            "source": "phh",
-            "filename": os.path.basename(phh_path),
-            "move_count": len(public_actions),
-            "private_actions_excluded": len(actions) - len(public_actions),
-        }
-        yield tokens, metadata
+            if len(public_actions) < 2:
+                continue
 
-        if max_hands and parsed >= max_hands:
-            break
+            parsed += 1
+            tokens = ["<bos>", "<poker>"] + state_tokens + public_actions + ["<eos>"]
+            metadata = {
+                "source": "phh",
+                "filename": os.path.basename(source_file),
+                "move_count": len(public_actions),
+                "private_actions_excluded": private_excluded,
+                "source_path": str(Path(source_file).resolve()),
+            }
+            yield tokens, metadata
+
+            if max_hands and parsed >= max_hands:
+                return
 
 if __name__ == "__main__":
     # Test simulator

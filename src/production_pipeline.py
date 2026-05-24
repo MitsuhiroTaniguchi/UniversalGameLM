@@ -3,12 +3,18 @@ import hashlib
 import json
 import os
 import re
+from functools import lru_cache
 from pathlib import Path
 
-from src.chess_parser import parse_pgn_to_tokens
+from src.chess_parser import parse_chess_inputs
 from src.shogi_parser import parse_shogi_directory
 from src.go_parser import parse_go_directory
-from src.othello_parser import parse_othello_pgn_to_tokens
+from src.othello_parser import (
+    parse_othello_hf_dataset,
+    parse_othello_jsonl_to_tokens,
+    parse_othello_pgn_to_tokens,
+    validate_othello_moves,
+)
 from src.poker_parser import parse_phh_to_tokens
 from src.hf_uploader import HuggingFaceShardUploader
 from src.stats import DatasetStatsAccumulator
@@ -20,6 +26,8 @@ PRIVATE_POKER_TOKEN_PATTERNS = (
     re.compile(r"^h:", re.IGNORECASE),
     re.compile(r"^hole", re.IGNORECASE),
     re.compile(r"^deal[_: -]?hole", re.IGNORECASE),
+    re.compile(r"^d[_: -]?dh(?:[_: -]|$)", re.IGNORECASE),
+    re.compile(r"^dh(?:[_: -]|$)", re.IGNORECASE),
     re.compile(r"^show[_: -]?or[_: -]?muck[_: -]?hole", re.IGNORECASE),
 )
 
@@ -28,10 +36,22 @@ class ProductionDatasetError(RuntimeError):
     pass
 
 
+@lru_cache(maxsize=4096)
 def source_id_for_path(path):
-    resolved = str(Path(path).resolve())
-    digest = hashlib.sha256(resolved.encode("utf-8")).hexdigest()[:16]
-    return f"local:{Path(path).name}:{digest}"
+    path_obj = Path(path)
+    if str(path).startswith("hf://"):
+        digest = hashlib.sha256(str(path).encode("utf-8")).hexdigest()[:16]
+        return f"{path}:{digest}"
+    resolved = path_obj.resolve()
+    hasher = hashlib.sha256()
+    if resolved.is_file():
+        with open(resolved, "rb") as f:
+            for chunk in iter(lambda: f.read(1024 * 1024), b""):
+                hasher.update(chunk)
+        digest = hasher.hexdigest()[:16]
+        return f"local:{resolved.name}:sha256:{digest}"
+    digest = hashlib.sha256(str(resolved).encode("utf-8")).hexdigest()[:16]
+    return f"local-dir:{resolved.name}:{digest}"
 
 
 def iter_game_entries(game, input_paths, max_records=None):
@@ -39,27 +59,37 @@ def iter_game_entries(game, input_paths, max_records=None):
     for input_path in input_paths:
         path = Path(input_path)
         if game == "chess":
-            iterator = parse_pgn_to_tokens(str(path), max_games=max_records)
+            iterator = parse_chess_inputs(str(path), max_games=max_records)
         elif game == "shogi":
             iterator = parse_shogi_directory(str(path), max_games=max_records)
         elif game == "go":
             iterator = parse_go_directory(str(path), max_games=max_records)
         elif game == "othello":
-            iterator = parse_othello_pgn_to_tokens(str(path), max_games=max_records)
+            input_text = str(input_path)
+            if input_text.startswith("hf://"):
+                dataset_spec = input_text.removeprefix("hf://")
+                dataset_id, _, split = dataset_spec.partition(":")
+                iterator = parse_othello_hf_dataset(dataset_id, split=split or "train", max_games=max_records)
+            elif path.suffix.lower() == ".jsonl":
+                iterator = parse_othello_jsonl_to_tokens(str(path), max_games=max_records)
+            else:
+                iterator = parse_othello_pgn_to_tokens(str(path), max_games=max_records)
         elif game == "poker":
             iterator = parse_phh_to_tokens(str(path), max_hands=max_records)
         else:
             raise ValueError(f"Unsupported game: {game}")
 
         for tokens, metadata in iterator:
+            actual_source = metadata.get("source_path") or str(input_path)
             emitted += 1
             yield {
                 "game": game,
                 "tokens": tokens,
                 "metadata": {
                     **metadata,
-                    "source_id": source_id_for_path(path),
-                    "source_name": path.name,
+                    "source_id": source_id_for_path(actual_source),
+                    "source_name": Path(actual_source).name if not str(actual_source).startswith("hf://") else actual_source,
+                    "ingestion_version": 2,
                 },
             }
             if max_records and emitted >= max_records:
@@ -79,6 +109,42 @@ def validate_entry(entry):
         raise ProductionDatasetError(f"{game} sequence has wrong game marker: {tokens[1]}")
     if any(not isinstance(token, str) or not token for token in tokens):
         raise ProductionDatasetError(f"{game} sequence contains an invalid token")
+    if game == "chess":
+        for token in tokens[2:-1]:
+            if token.startswith(("FEN:", "VARIANT:")):
+                continue
+            if not re.fullmatch(r"[a-h][1-8][a-h][1-8][qrbn]?", token):
+                raise ProductionDatasetError(f"Invalid chess token: {token}")
+    if game == "shogi":
+        for token in tokens[2:-1]:
+            if token.startswith(("SETUP:", "TURN:", "END:")):
+                continue
+            if token == "None" or not re.fullmatch(r"(?:[1-9][a-i][1-9][a-i]\+?|[PLNSGBR]\*[1-9][a-i])", token):
+                raise ProductionDatasetError(f"Invalid shogi USI token: {token}")
+        if not any(token.startswith("END:") for token in tokens):
+            raise ProductionDatasetError("Shogi entry is missing terminal token")
+    if game == "go":
+        if not tokens[2].startswith("SZ:"):
+            raise ProductionDatasetError("Go entry is missing board size token")
+        board_size = int(tokens[2].split(":", 1)[1])
+        for token in tokens[3:-1]:
+            if token.endswith(":pass"):
+                continue
+            if token.startswith(("AB:", "AW:", "AE:", "b:", "w:")):
+                point = token.split(":", 1)[1]
+                if not re.fullmatch(r"[a-z]{2}", point):
+                    raise ProductionDatasetError(f"Invalid Go point token: {token}")
+                col = ord(point[0]) - ord("a")
+                row = ord(point[1]) - ord("a")
+                if not (0 <= col < board_size and 0 <= row < board_size):
+                    raise ProductionDatasetError(f"Go point out of range: {token}")
+                continue
+            raise ProductionDatasetError(f"Invalid Go token: {token}")
+    if game == "othello":
+        try:
+            validate_othello_moves(tokens[2:-1])
+        except ValueError as exc:
+            raise ProductionDatasetError(f"Invalid Othello sequence: {exc}") from exc
     if game == "poker" and any(
         pattern.search(token) for token in tokens for pattern in PRIVATE_POKER_TOKEN_PATTERNS
     ):
@@ -98,20 +164,26 @@ class JsonlShardWriter:
         self.current_file = None
         self.current_raw_file = None
         self.current_path = None
+        self.current_temp_path = None
+        self.current_hash = None
         self.completed = []
 
     def _open_next(self):
         suffix = ".jsonl.gz" if self.compress else ".jsonl"
         self.current_path = self.output_dir / f"{self.game}-{self.shard_index:06d}{suffix}"
+        self.current_temp_path = self.output_dir / f".{self.game}-{self.shard_index:06d}{suffix}.tmp"
         if self.current_path.exists():
             raise ProductionDatasetError(
                 f"Refusing to overwrite existing shard: {self.current_path}. "
                 "Use a new output directory or implement an explicit resume manifest."
             )
-        self.current_raw_file = open(self.current_path, "wb")
+        if self.current_temp_path.exists():
+            raise ProductionDatasetError(f"Refusing to overwrite existing temp shard: {self.current_temp_path}")
+        self.current_raw_file = open(self.current_temp_path, "wb")
         self.current_file = gzip.GzipFile(fileobj=self.current_raw_file, mode="wb") if self.compress else self.current_raw_file
         self.current_tokens = 0
         self.current_rows = 0
+        self.current_hash = hashlib.sha256()
         self.shard_index += 1
 
     def _close_current(self):
@@ -120,15 +192,19 @@ class JsonlShardWriter:
         self.current_file.close()
         if self.compress and self.current_raw_file is not None:
             self.current_raw_file.close()
+        os.replace(self.current_temp_path, self.current_path)
         info = {
             "path": str(self.current_path),
             "tokens": self.current_tokens,
             "rows": self.current_rows,
+            "sha256_uncompressed_jsonl": self.current_hash.hexdigest(),
         }
         self.completed.append(info)
         self.current_file = None
         self.current_raw_file = None
         self.current_path = None
+        self.current_temp_path = None
+        self.current_hash = None
         return info
 
     def write(self, entry):
@@ -144,6 +220,7 @@ class JsonlShardWriter:
             completed = None
 
         payload = json.dumps(entry, ensure_ascii=False).encode("utf-8") + b"\n"
+        self.current_hash.update(payload)
         self.current_file.write(payload)
         self.current_tokens += token_count
         self.current_rows += 1
@@ -170,20 +247,31 @@ def build_game_shards(
     total_rows = 0
     uploaded = []
 
-    for entry in iter_game_entries(game, input_paths, max_records=max_records):
-        if total_tokens >= target_tokens:
-            break
-        completed = writer.write(entry)
-        stats.update(entry)
-        total_tokens += len(entry["tokens"])
-        total_rows += 1
+    try:
+        for entry in iter_game_entries(game, input_paths, max_records=max_records):
+            if total_tokens >= target_tokens:
+                break
+            completed = writer.write(entry)
+            stats.update(entry)
+            total_tokens += len(entry["tokens"])
+            total_rows += 1
 
-        if completed and uploader:
-            repo_path = str(Path(repo_prefix) / Path(completed["path"]).name)
-            uploader.upload_file(completed["path"], repo_path, delete_local=delete_after_upload)
-            uploaded.append(repo_path)
+            if completed and uploader:
+                repo_path = str(Path(repo_prefix) / Path(completed["path"]).name)
+                uploader.upload_file(completed["path"], repo_path, delete_local=delete_after_upload)
+                uploaded.append(repo_path)
 
-    final = writer.close()
+        final = writer.close()
+    except Exception:
+        if writer.current_file is not None:
+            try:
+                writer.current_file.close()
+            finally:
+                if writer.compress and writer.current_raw_file is not None:
+                    writer.current_raw_file.close()
+                if writer.current_temp_path and Path(writer.current_temp_path).exists():
+                    Path(writer.current_temp_path).unlink()
+        raise
     if final and uploader:
         repo_path = str(Path(repo_prefix) / Path(final["path"]).name)
         uploader.upload_file(final["path"], repo_path, delete_local=delete_after_upload)

@@ -1,5 +1,6 @@
 import os
-import glob
+import gzip
+from pathlib import Path
 import sgfmill.sgf
 
 def get_sgf_property(node, name, default="Unknown"):
@@ -26,11 +27,14 @@ def parse_sgf_to_tokens(sgf_path):
         return None, None
 
     try:
-        with open(sgf_path, "r", encoding="utf-8", errors="ignore") as f:
+        opener = gzip.open if str(sgf_path).lower().endswith(".gz") else open
+        with opener(sgf_path, "rt", encoding="utf-8", errors="ignore") as f:
             sgf_content = f.read()
 
         game = sgfmill.sgf.Sgf_game.from_string(sgf_content)
         root = game.get_root()
+        if any(len(getattr(node, "_children", [])) > 1 for node in game.get_main_sequence()):
+            raise ValueError("SGF variations are not accepted in production tokenization")
 
         board_size = root.get_size()
         if board_size < 1 or board_size > 26:
@@ -39,20 +43,33 @@ def parse_sgf_to_tokens(sgf_path):
         # Extract setup stones before moves. Without these, handicap/setup SGFs
         # become ambiguous or illegal when reconstructed from tokens.
         setup_tokens = []
-        if root.has_setup_stones():
-            black_stones, white_stones, empty_points = root.get_setup_stones()
+        def append_setup_tokens(node):
+            if not node.has_setup_stones():
+                return
+            black_stones, white_stones, empty_points = node.get_setup_stones()
+            for coords in list(black_stones) + list(white_stones) + list(empty_points):
+                row, col = coords
+                if not (0 <= row < board_size and 0 <= col < board_size):
+                    raise ValueError(f"Setup point out of range: {coords}")
             setup_tokens.extend(f"AB:{coords_to_token(c, board_size)}" for c in sorted(black_stones))
             setup_tokens.extend(f"AW:{coords_to_token(c, board_size)}" for c in sorted(white_stones))
             setup_tokens.extend(f"AE:{coords_to_token(c, board_size)}" for c in sorted(empty_points))
 
+        append_setup_tokens(root)
+
         moves = []
         for node in game.get_main_sequence():
+            if node is not root:
+                append_setup_tokens(node)
             move = node.get_move()
             if move is not None and move[0] is not None:
                 color, coords = move
                 if coords is None:
                     moves.append(f"{color}:pass")
                 else:
+                    row, col = coords
+                    if not (0 <= row < board_size and 0 <= col < board_size):
+                        raise ValueError(f"Move point out of range: {coords}")
                     moves.append(f"{color}:{coords_to_token(coords, board_size)}")
 
         # Quality Filter: Skip empty or extremely short games
@@ -67,9 +84,13 @@ def parse_sgf_to_tokens(sgf_path):
             "result": get_sgf_property(root, "RE", "*"),
             "date": get_sgf_property(root, "DT", "????-??-??"),
             "board_size": board_size,
+            "komi": get_sgf_property(root, "KM", None),
+            "handicap": get_sgf_property(root, "HA", None),
+            "rules": get_sgf_property(root, "RU", None),
             "setup_count": len(setup_tokens),
             "move_count": len(moves),
-            "filename": os.path.basename(sgf_path)
+            "filename": os.path.basename(sgf_path),
+            "source_path": str(Path(sgf_path).resolve()),
         }
 
         return tokens, metadata
@@ -77,17 +98,26 @@ def parse_sgf_to_tokens(sgf_path):
         print(f"[Warning] Failed to parse {os.path.basename(sgf_path)}: {e}")
         return None, None
 
+def iter_sgf_files(directory_path):
+    path = Path(directory_path)
+    if path.is_file():
+        if path.name.lower().endswith((".sgf", ".sgf.gz")):
+            yield str(path)
+        return
+    for root, _, files in os.walk(path):
+        for name in sorted(files):
+            if name.lower().endswith((".sgf", ".sgf.gz")):
+                yield str(Path(root) / name)
+
+
 def parse_go_directory(directory_path, max_games=None):
     """
     Parses all SGF files in a directory and yields token sequences.
     """
-    sgf_pattern = os.path.join(directory_path, "**", "*.sgf")
-    sgf_files = glob.glob(sgf_pattern, recursive=True)
-    
-    print(f"[Parsing Go] Found {len(sgf_files)} SGF files in {directory_path}...")
+    print(f"[Parsing Go] Streaming SGF files from {directory_path}...")
     
     games_parsed = 0
-    for filepath in sgf_files:
+    for filepath in iter_sgf_files(directory_path):
         tokens, metadata = parse_sgf_to_tokens(filepath)
         if tokens is not None:
             games_parsed += 1
