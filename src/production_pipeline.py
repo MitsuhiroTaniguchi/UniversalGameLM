@@ -335,6 +335,8 @@ def build_game_shards(
         "status": status,
         "rows": total_rows,
         "tokens": total_tokens,
+        "output_format": output_format,
+        "tokenizer_fingerprint": tokenizer.fingerprint() if tokenizer is not None else None,
         "target_tokens": target_tokens,
         "token_deficit": max(target_tokens - total_tokens, 0),
         "shards": writer.completed,

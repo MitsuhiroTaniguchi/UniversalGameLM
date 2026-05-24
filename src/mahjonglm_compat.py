@@ -81,13 +81,11 @@ def normalize_mahjonglm_metadata(entry):
 
 def entry_to_mahjonglm_row(entry, tokenizer):
     stream_tokens = tokens_to_mahjonglm_stream(entry)
-    ids = tokenizer.encode(stream_tokens)
-    if any(token_id == tokenizer.vocab.get("<unk>", -1) for token_id in ids):
-        missing = [token for token, token_id in zip(stream_tokens, ids) if token_id == tokenizer.vocab.get("<unk>", -1)]
-        raise ValueError(f"Tokenizer is missing tokens: {missing[:10]}")
+    ids = tokenizer.encode_strict(stream_tokens)
     row = normalize_mahjonglm_metadata(entry)
     row["length"] = len(ids)
     row["input_ids"] = ids
+    row["tokenizer_fingerprint"] = tokenizer.fingerprint()
     return row
 
 

@@ -1,6 +1,8 @@
 import argparse
+import contextlib
 import json
 import os
+import sys
 
 from src.production_pipeline import (
     DEFAULT_TARGET_TOKENS,
@@ -34,25 +36,27 @@ def main():
         from src.mahjonglm_compat import collect_tokens_for_mahjonglm
         from src.production_pipeline import iter_game_entries
 
-        for entry in iter_game_entries(args.game, args.input, max_records=args.max_records):
-            tokenizer.add_tokens(collect_tokens_for_mahjonglm([entry]))
+        with contextlib.redirect_stdout(sys.stderr):
+            for entry in iter_game_entries(args.game, args.input, max_records=args.max_records):
+                tokenizer.add_tokens(collect_tokens_for_mahjonglm([entry]))
         if args.tokenizer_output_dir:
             tokenizer.save_mahjonglm_assets(args.tokenizer_output_dir)
 
     uploader = maybe_hf_uploader(args.hf_repo_id)
-    result = build_game_shards(
-        args.game,
-        args.input,
-        args.output_dir,
-        target_tokens=args.target_tokens,
-        max_tokens_per_shard=args.max_tokens_per_shard,
-        max_records=args.max_records,
-        uploader=uploader,
-        delete_after_upload=args.delete_after_upload,
-        repo_prefix=args.hf_repo_prefix or args.game,
-        output_format=args.output_format,
-        tokenizer=tokenizer,
-    )
+    with contextlib.redirect_stdout(sys.stderr):
+        result = build_game_shards(
+            args.game,
+            args.input,
+            args.output_dir,
+            target_tokens=args.target_tokens,
+            max_tokens_per_shard=args.max_tokens_per_shard,
+            max_records=args.max_records,
+            uploader=uploader,
+            delete_after_upload=args.delete_after_upload,
+            repo_prefix=args.hf_repo_prefix or args.game,
+            output_format=args.output_format,
+            tokenizer=tokenizer,
+        )
     print(json.dumps(result, indent=2, ensure_ascii=False))
     if result["status"] != "ready":
         raise SystemExit(2)

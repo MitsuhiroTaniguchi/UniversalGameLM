@@ -206,14 +206,31 @@ class TestUniversalGameParsers(unittest.TestCase):
             }
             self.assertEqual(tokens_to_mahjonglm_stream(entry), ["rule_chess", "view_complete", "e2e4", "e7e5", "g1f3", "b8c6"])
             row = entry_to_mahjonglm_row(entry, tokenizer)
-            self.assertEqual(set(row), {"game_id", "year", "seat_count", "view_type", "viewer_seat", "length", "input_ids"})
+            self.assertEqual(set(row), {"game_id", "year", "seat_count", "view_type", "viewer_seat", "length", "input_ids", "tokenizer_fingerprint"})
             self.assertEqual(row["year"], 2024)
             self.assertEqual(row["seat_count"], 2)
             self.assertEqual(row["view_type"], "complete")
             self.assertIsNone(row["viewer_seat"])
             self.assertEqual(row["length"], 6)
+            self.assertEqual(row["tokenizer_fingerprint"], tokenizer.fingerprint())
             self.assertNotIn(tokenizer.vocab["<bos>"], row["input_ids"])
             self.assertNotIn(tokenizer.vocab["<eos>"], row["input_ids"])
+
+    def test_mahjonglm_tokenizer_rejects_sparse_or_duplicate_ids(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            sparse_dir = os.path.join(temp_dir, "sparse")
+            os.makedirs(sparse_dir)
+            with open(os.path.join(sparse_dir, "vocab.json"), "w", encoding="utf-8") as f:
+                json.dump({"<pad>": 0, "<unk>": 1, "rule_riichi": 3}, f)
+            with self.assertRaises(ValueError):
+                UniversalGameTokenizer.from_mahjonglm_assets(sparse_dir)
+
+            dup_dir = os.path.join(temp_dir, "dup")
+            os.makedirs(dup_dir)
+            with open(os.path.join(dup_dir, "vocab.json"), "w", encoding="utf-8") as f:
+                json.dump({"<pad>": 0, "<unk>": 1, "rule_riichi": 1}, f)
+            with self.assertRaises(ValueError):
+                UniversalGameTokenizer.from_mahjonglm_assets(dup_dir)
 
     def test_safe_extract_zip_rejects_path_traversal(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -473,12 +490,13 @@ actions = [
             )
             with gzip.open(result["shards"][0]["path"], "rt", encoding="utf-8") as f:
                 row = json.loads(f.readline())
-            self.assertEqual(set(row), {"game_id", "year", "seat_count", "view_type", "viewer_seat", "length", "input_ids"})
+            self.assertEqual(set(row), {"game_id", "year", "seat_count", "view_type", "viewer_seat", "length", "input_ids", "tokenizer_fingerprint"})
             self.assertEqual(row["year"], 2025)
             self.assertEqual(row["seat_count"], 2)
             self.assertEqual(row["view_type"], "complete")
             self.assertEqual(row["input_ids"][0], tokenizer.vocab["rule_chess"])
             self.assertEqual(row["input_ids"][1], tokenizer.vocab["view_complete"])
+            self.assertEqual(row["tokenizer_fingerprint"], result["tokenizer_fingerprint"])
 
     def test_shogi_parser_rejects_missing_terminal(self):
         with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".csa") as f:

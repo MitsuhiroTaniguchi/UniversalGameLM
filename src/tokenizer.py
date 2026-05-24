@@ -1,8 +1,10 @@
 import os
 import json
+import hashlib
 from pathlib import Path
 
 from tokenizers import Tokenizer
+from tokenizers import AddedToken
 from tokenizers.models import WordLevel
 from tokenizers.pre_tokenizers import WhitespaceSplit
 
@@ -17,6 +19,7 @@ class UniversalGameTokenizer:
         self.special_tokens = special_tokens
         self.vocab = {}
         self.inv_vocab = {}
+        self.backend_tokenizer = None
         
         # Initialize with special tokens
         for token in self.special_tokens:
@@ -24,9 +27,11 @@ class UniversalGameTokenizer:
 
     def _register_token(self, token):
         if token not in self.vocab:
-            idx = len(self.vocab)
+            idx = (max(self.inv_vocab) + 1) if self.inv_vocab else 0
             self.vocab[token] = idx
             self.inv_vocab[idx] = token
+            if self.backend_tokenizer is not None:
+                self.backend_tokenizer.add_tokens([AddedToken(token, single_word=False, lstrip=False, rstrip=False, normalized=False)])
             return idx
         return self.vocab[token]
 
@@ -47,6 +52,13 @@ class UniversalGameTokenizer:
         """Converts list of string tokens to a list of integer IDs."""
         unk_id = self.vocab.get("<unk>", 1)
         return [self.vocab.get(token, unk_id) for token in tokens]
+
+    def encode_strict(self, tokens):
+        """Converts tokens to ids and fails if any token is absent."""
+        missing = [token for token in tokens if token not in self.vocab]
+        if missing:
+            raise KeyError(f"Tokenizer is missing tokens: {missing[:10]}")
+        return [self.vocab[token] for token in tokens]
 
     def decode(self, ids):
         """Converts list of integer IDs back to string tokens."""
@@ -70,6 +82,7 @@ class UniversalGameTokenizer:
             self.vocab = json.load(f)
             
         self.inv_vocab = {int(v): k for k, v in self.vocab.items()}
+        self._validate_vocab_ids()
         # Re-derive special tokens list based on loaded keys
         self.special_tokens = [k for k in self.vocab.keys() if k.startswith("<") and k.endswith(">")]
         print(f"[Tokenizer] Loaded vocabulary from {filepath}. Size: {len(self.vocab)}")
@@ -93,6 +106,7 @@ class UniversalGameTokenizer:
 
         if tokenizer_json.exists():
             tokenizer = Tokenizer.from_file(str(tokenizer_json))
+            instance.backend_tokenizer = tokenizer
             vocab = tokenizer.get_vocab()
             instance.vocab = {token: int(idx) for token, idx in vocab.items()}
         elif vocab_txt.exists():
@@ -105,6 +119,7 @@ class UniversalGameTokenizer:
             raise FileNotFoundError(f"No tokenizer.json, vocab.txt, or vocab.json found in {tokenizer_dir}")
 
         instance.inv_vocab = {idx: token for token, idx in instance.vocab.items()}
+        instance._validate_vocab_ids()
         instance.special_tokens = [
             token for token in instance.vocab
             if token.startswith("<") and token.endswith(">")
@@ -119,6 +134,25 @@ class UniversalGameTokenizer:
                 added += 1
         return added
 
+    def _validate_vocab_ids(self):
+        ids = list(self.vocab.values())
+        if len(ids) != len(set(ids)):
+            raise ValueError("Tokenizer vocabulary contains duplicate ids")
+        if any(not isinstance(idx, int) or idx < 0 for idx in ids):
+            raise ValueError("Tokenizer vocabulary ids must be non-negative integers")
+        expected = set(range(max(ids) + 1)) if ids else set()
+        missing = sorted(expected - set(ids))
+        if missing:
+            raise ValueError(f"Tokenizer vocabulary ids must be dense; missing ids start with {missing[:10]}")
+
+    def fingerprint(self):
+        payload = json.dumps(
+            sorted(self.vocab.items(), key=lambda item: item[1]),
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
     def save_mahjonglm_assets(self, output_dir):
         """Writes tokenizer assets with MahjongLM ids preserved and new ids appended."""
         output_dir = Path(output_dir)
@@ -131,8 +165,11 @@ class UniversalGameTokenizer:
         with open(output_dir / "vocab.json", "w", encoding="utf-8") as f:
             json.dump(self.vocab, f, indent=2, ensure_ascii=False)
 
-        tokenizer = Tokenizer(WordLevel(vocab=self.vocab, unk_token="<unk>"))
-        tokenizer.pre_tokenizer = WhitespaceSplit()
+        if self.backend_tokenizer is not None:
+            tokenizer = self.backend_tokenizer
+        else:
+            tokenizer = Tokenizer(WordLevel(vocab=self.vocab, unk_token="<unk>"))
+            tokenizer.pre_tokenizer = WhitespaceSplit()
         tokenizer.save(str(output_dir / "tokenizer.json"))
         with open(output_dir / "tokenizer_config.json", "w", encoding="utf-8") as f:
             json.dump({"tokenizer_class": "PreTrainedTokenizerFast"}, f, indent=2)
