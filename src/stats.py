@@ -1,55 +1,110 @@
 import collections
 
+class DatasetStatsAccumulator:
+    """Tracks dataset statistics without retaining every serialized row."""
+    def __init__(self):
+        self.game_counts = collections.Counter()
+        self.token_counts = collections.Counter()
+        self.non_special_token_counts = collections.Counter()
+        self.length_counts = collections.defaultdict(collections.Counter)
+        self.move_counts = collections.defaultdict(collections.Counter)
+
+    def update(self, item):
+        game = item["game"]
+        tokens = item["tokens"]
+        self.game_counts[game] += 1
+        self.token_counts[game] += len(tokens)
+        self.length_counts[game][len(tokens)] += 1
+
+        moves = [t for t in tokens if not (t.startswith("<") and t.endswith(">"))]
+        self.non_special_token_counts[game] += len(moves)
+        self.move_counts[game].update(moves)
+
+    def _median_length(self, game):
+        total = self.game_counts[game]
+        if total == 0:
+            return 0
+
+        midpoint = total // 2
+        seen = 0
+        for length, count in sorted(self.length_counts[game].items()):
+            seen += count
+            if seen > midpoint:
+                return length
+        return 0
+
+    def summary(self, target_tokens_per_game=None):
+        games = {}
+        for game in sorted(self.game_counts):
+            count = self.game_counts[game]
+            token_count = self.token_counts[game]
+            lengths = self.length_counts[game]
+            avg_len = token_count / count if count else 0
+            target = target_tokens_per_game or 0
+            deficit = max(target - token_count, 0) if target else 0
+            coverage = (token_count / target) if target else None
+            games[game] = {
+                "games": count,
+                "tokens": token_count,
+                "target_tokens": target or None,
+                "token_deficit": deficit if target else None,
+                "coverage": coverage,
+                "min_length": min(lengths) if lengths else 0,
+                "max_length": max(lengths) if lengths else 0,
+                "avg_length": avg_len,
+                "median_length": self._median_length(game),
+                "unique_non_special_tokens": len(self.move_counts[game]),
+                "non_special_tokens": self.non_special_token_counts[game],
+                "top_non_special_tokens": self.move_counts[game].most_common(10),
+            }
+        return games
+
+    def print_report(self, target_tokens_per_game=None):
+        print_dataset_stats(self.summary(target_tokens_per_game))
+
+def print_dataset_stats(summary):
+    total_games = sum(item["games"] for item in summary.values())
+    total_tokens = sum(item["tokens"] for item in summary.values())
+
+    print("\n" + "="*50)
+    print("           UNIVERSAL GAME LM DATASET STATS")
+    print("="*50)
+    print(f"Total Games in Dataset: {total_games}")
+    print(f"Total Tokens in Dataset: {total_tokens}")
+
+    for game_name, item in summary.items():
+        print(f"\n--- {game_name.upper()} ({item['games']} games) ---")
+        print(f"  Tokens: {item['tokens']:,}")
+        if item.get("target_tokens"):
+            coverage = item["coverage"] or 0
+            print(f"  Target: {item['target_tokens']:,} tokens")
+            print(f"  Coverage: {coverage:.8%}")
+            print(f"  Deficit: {item['token_deficit']:,} tokens")
+
+        print(f"  Sequence Lengths:")
+        print(f"    Min:    {item['min_length']} tokens")
+        print(f"    Max:    {item['max_length']} tokens")
+        print(f"    Avg:    {item['avg_length']:.1f} tokens")
+        print(f"    Median: {item['median_length']} tokens")
+
+        print(f"  Unique Non-Special Tokens: {item['unique_non_special_tokens']}")
+        print(f"  Top 10 Non-Special Tokens:")
+        total_non_special = item["non_special_tokens"] or 1
+        for move, freq in item["top_non_special_tokens"]:
+            percent = (freq / total_non_special) * 100
+            print(f"    {move:<8} : {freq:>5} times ({percent:>5.2f}%)")
+
+    print("="*50 + "\n")
+
 def analyze_dataset_stats(dataset):
     """
     Analyzes and prints statistical insights for a tokenized dataset.
     dataset is a list of dicts: [{'tokens': [...], 'game': 'chess'/'shogi', 'metadata': {...}}]
     """
-    by_game = collections.defaultdict(list)
+    accumulator = DatasetStatsAccumulator()
     for item in dataset:
-        by_game[item["game"]].append(item)
-
-    print("\n" + "="*50)
-    print("           UNIVERSAL GAME LM DATASET STATS")
-    print("="*50)
-    
-    total_games = len(dataset)
-    print(f"Total Games in Dataset: {total_games}")
-    
-    for game_name, games in by_game.items():
-        count = len(games)
-        print(f"\n--- {game_name.upper()} ({count} games) ---")
-        
-        # Sequence lengths
-        lengths = [len(g["tokens"]) for g in games]
-        avg_len = sum(lengths) / len(lengths) if lengths else 0
-        min_len = min(lengths) if lengths else 0
-        max_len = max(lengths) if lengths else 0
-        
-        # Sort to find median
-        sorted_lengths = sorted(lengths)
-        median_len = sorted_lengths[len(sorted_lengths)//2] if sorted_lengths else 0
-        
-        print(f"  Sequence Lengths:")
-        print(f"    Min:    {min_len} tokens")
-        print(f"    Max:    {max_len} tokens")
-        print(f"    Avg:    {avg_len:.1f} tokens")
-        print(f"    Median: {median_len} tokens")
-        
-        # Most common moves
-        move_counts = collections.Counter()
-        for g in games:
-            # Skip special tokens <bos>, <eos>, <chess>, <shogi>
-            moves = [t for t in g["tokens"] if not (t.startswith("<") and t.endswith(">"))]
-            move_counts.update(moves)
-            
-        print(f"  Unique Moves: {len(move_counts)}")
-        print(f"  Top 10 Most Common Moves:")
-        for move, freq in move_counts.most_common(10):
-            percent = (freq / sum(move_counts.values())) * 100 if move_counts else 0
-            print(f"    {move:<8} : {freq:>5} times ({percent:>5.2f}%)")
-            
-    print("="*50 + "\n")
+        accumulator.update(item)
+    accumulator.print_report()
 
 if __name__ == "__main__":
     # Test statistics
