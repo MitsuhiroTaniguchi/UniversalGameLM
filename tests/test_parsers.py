@@ -174,6 +174,11 @@ class TestUniversalGameParsers(unittest.TestCase):
         canonical = validate_othello_moves(["d3", "c3", "b3", "b2", "b1", "a1", "c4", "c1"], require_terminal=False)
         self.assertEqual(canonical, ["d3", "c3", "b3", "b2", "b1", "a1", "c4", "c1"])
 
+    def test_othello_validation_appends_terminal_double_passes(self):
+        moves_without_passes = [move for move in TERMINAL_OTHELLO_MOVES if move != "pass"]
+        canonical = validate_othello_moves(moves_without_passes)
+        self.assertEqual(canonical[-2:], ["pass", "pass"])
+
     def test_poker_simulator(self):
         simulator = PokerHandSimulator()
         tokens, meta = simulator.simulate_hand()
@@ -183,6 +188,9 @@ class TestUniversalGameParsers(unittest.TestCase):
         self.assertEqual(tokens[-1], "<eos>")
         self.assertFalse(any(t.startswith("H:") for t in tokens))
         self.assertFalse(any(re.search(r"[br]\d+", t) for t in tokens))
+        self.assertIn("act:post_small_blind", tokens)
+        self.assertIn("act:post_big_blind", tokens)
+        self.assertFalse(any(token.startswith("street:") for token in tokens))
         self.assertTrue(any(t.startswith("winner:") for t in tokens))
         self.assertIsNotNone(meta["winner"])
         validate_entry({"game": "poker", "tokens": tokens, "metadata": meta})
@@ -344,6 +352,8 @@ HA H2 H7 H3
             self.assertEqual(added, 3)
             self.assertEqual(tokenizer.vocab["rule_riichi"], 4)
             self.assertEqual(tokenizer.vocab["rule_chess"], 7)
+            if tokenizer.backend_tokenizer is not None:
+                self.assertEqual(tokenizer.backend_tokenizer.token_to_id("rule_chess"), 7)
 
     def test_mahjonglm_row_schema_excludes_boundary_tokens(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -734,6 +744,7 @@ actions = [
                 "imperfect": 6,
                 "omniscient": 1,
             })
+            self.assertEqual(len(result["shards"]), 1)
 
     def test_mahjonglm_jsonl_shard_uses_compatible_schema(self):
         with tempfile.TemporaryDirectory() as temp_dir:

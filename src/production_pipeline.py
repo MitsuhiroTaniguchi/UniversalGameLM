@@ -336,14 +336,14 @@ class JsonlShardWriter:
         self.current_hash = None
         return info
 
-    def write(self, entry):
+    def write(self, entry, starts_new_view_group=True):
         validate_entry(entry)
         row = self.row_transform(entry) if self.row_transform else entry
         if self.current_file is None:
             self._open_next()
 
         token_count = row_token_count(row)
-        if self.current_rows > 0 and self.current_tokens + token_count > self.max_tokens_per_shard:
+        if starts_new_view_group and self.current_rows > 0 and self.current_tokens + token_count > self.max_tokens_per_shard:
             completed = self._close_current()
             self._open_next()
         else:
@@ -404,7 +404,7 @@ def build_game_shards(
             stats_entry = entry
             if output_format == "mahjonglm_jsonl":
                 stats_entry = {**entry, "tokens": entry_to_mahjonglm_row_tokens(entry)}
-            completed = writer.write(entry)
+            completed = writer.write(entry, starts_new_view_group=starts_new_view_group)
             stats.update(stats_entry)
             total_tokens += row_token_count(row_transform(entry) if row_transform else entry)
             total_rows += 1

@@ -32,6 +32,9 @@ class UniversalGameTokenizer:
             self.inv_vocab[idx] = token
             if self.backend_tokenizer is not None:
                 self.backend_tokenizer.add_tokens([AddedToken(token, single_word=False, lstrip=False, rstrip=False, normalized=False)])
+                backend_id = self.backend_tokenizer.token_to_id(token)
+                if backend_id != idx:
+                    raise ValueError(f"Backend tokenizer id mismatch for {token}: expected {idx}, got {backend_id}")
             return idx
         return self.vocab[token]
 

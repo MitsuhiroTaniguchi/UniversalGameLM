@@ -93,8 +93,13 @@ def validate_othello_moves(moves, require_terminal=True):
             if remaining:
                 raise ValueError("Moves after double pass are not allowed")
             break
-    if require_terminal and (legal_moves(board, "B") or legal_moves(board, "W")):
+    black_legal = legal_moves(board, "B")
+    white_legal = legal_moves(board, "W")
+    if require_terminal and (black_legal or white_legal):
         raise ValueError("Othello game is not terminal")
+    if not black_legal and not white_legal:
+        while len(canonical_moves) < 2 or canonical_moves[-2:] != [PASS_TOKEN, PASS_TOKEN]:
+            canonical_moves.append(PASS_TOKEN)
     return canonical_moves
 
 

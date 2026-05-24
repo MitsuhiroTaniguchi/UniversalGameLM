@@ -145,8 +145,8 @@ class PokerHandSimulator:
         # 2. Blinds Posting. Hole cards are intentionally not emitted here:
         # pre-showdown action tokens must not leak hidden information.
         sb_amt, bb_amt = 10, 20
-        tokens.extend(["street:preflop", "seat:p1", "act:small_blind"] + _number_digit_tokens("AMT", sb_amt))
-        tokens.extend(["seat:p2", "act:big_blind"] + _number_digit_tokens("AMT", bb_amt))
+        tokens.extend(["act:preflop", "seat:p1", "act:post_small_blind"] + _number_digit_tokens("AMT", sb_amt))
+        tokens.extend(["seat:p2", "act:post_big_blind"] + _number_digit_tokens("AMT", bb_amt))
         
         # Community Cards
         flop = [deck.pop(), deck.pop(), deck.pop()]
@@ -181,7 +181,7 @@ class PokerHandSimulator:
             
         # Flop betting round (if at least 2 active players left)
         if len(active_players) >= 2:
-            tokens.extend(["street:flop"] + [f"card:{card}" for card in flop])
+            tokens.extend(["act:flop"] + [f"card:{card}" for card in flop])
             # Simulate check/bet
             for s in list(active_players):
                 # Simple flop decisions
@@ -194,13 +194,13 @@ class PokerHandSimulator:
                 
         # Turn betting round
         if len(active_players) >= 2:
-            tokens.extend(["street:turn", f"card:{turn[0]}"])
+            tokens.extend(["act:turn", f"card:{turn[0]}"])
             for s in list(active_players):
                 tokens.extend([f"seat:p{s}", "act:check"])
                 
         # River betting round
         if len(active_players) >= 2:
-            tokens.extend(["street:river", f"card:{river[0]}"])
+            tokens.extend(["act:river", f"card:{river[0]}"])
             # Final river decisions: aggressive bet from BTN or SB
             for s in list(active_players):
                 if s == active_players[-1]:
@@ -496,10 +496,12 @@ def _observed_private_holes(actions, state_tokens, private_holes):
     _assert_unique_cards(public_cards + known_private_cards)
     players = _players_from_state_and_actions(state_tokens, actions, private_holes)
     missing = [seat for seat in players if seat not in private_holes]
-    undealt_cards = [
-        card for card in FULL_DECK
-        if card not in set(public_cards + known_private_cards)
-    ]
+    undealt_cards = []
+    if not missing:
+        undealt_cards = [
+            card for card in FULL_DECK
+            if card not in set(public_cards + known_private_cards)
+        ]
     return {seat: list(cards) for seat, cards in private_holes.items()}, undealt_cards, players, missing
 
 
