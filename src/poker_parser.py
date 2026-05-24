@@ -256,6 +256,33 @@ def _is_public_phh_action(action):
     )
     return not normalized.startswith(private_prefixes)
 
+def iter_phh_action_lists(phh_path):
+    """Streams PHH action arrays without loading the whole file."""
+    in_actions = False
+    current = []
+    bracket_depth = 0
+
+    with open(phh_path, "r", encoding="utf-8", errors="ignore") as f:
+        for line in f:
+            stripped = line.strip()
+            if not in_actions:
+                if re.match(r"^actions\s*=", stripped):
+                    in_actions = True
+                    current = [line]
+                    bracket_depth = line.count("[") - line.count("]")
+                    if bracket_depth <= 0:
+                        text = "".join(current)
+                        yield re.findall(r'"([^"]+)"', text)
+                        in_actions = False
+                continue
+
+            current.append(line)
+            bracket_depth += line.count("[") - line.count("]")
+            if bracket_depth <= 0:
+                text = "".join(current)
+                yield re.findall(r'"([^"]+)"', text)
+                in_actions = False
+
 def parse_phh_to_tokens(phh_path, max_hands=None):
     """
     Parses a simple PHH/PHHS file and yields public action tokens.
@@ -267,17 +294,8 @@ def parse_phh_to_tokens(phh_path, max_hands=None):
         print(f"[Error] PHH file not found: {phh_path}")
         return
 
-    with open(phh_path, "r", encoding="utf-8", errors="ignore") as f:
-        content = f.read()
-
-    # Supports one PHH document or multiple documents separated by blank-table starts.
-    blocks = re.split(r"\n(?=\s*\[\[?hand)", content)
-    if len(blocks) == 1:
-        blocks = [content]
-
     parsed = 0
-    for block in blocks:
-        actions = re.findall(r'"([^"]+)"', block)
+    for actions in iter_phh_action_lists(phh_path):
         public_actions = [_sanitize_poker_action(a) for a in actions if _is_public_phh_action(a)]
         if len(public_actions) < 2:
             continue

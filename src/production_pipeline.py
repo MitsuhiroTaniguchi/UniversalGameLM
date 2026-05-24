@@ -1,6 +1,8 @@
 import gzip
+import hashlib
 import json
 import os
+import re
 from pathlib import Path
 
 from src.chess_parser import parse_pgn_to_tokens
@@ -14,10 +16,22 @@ from src.stats import DatasetStatsAccumulator
 
 GAME_ORDER = ("chess", "shogi", "go", "othello", "poker")
 DEFAULT_TARGET_TOKENS = 3_000_000_000
+PRIVATE_POKER_TOKEN_PATTERNS = (
+    re.compile(r"^h:", re.IGNORECASE),
+    re.compile(r"^hole", re.IGNORECASE),
+    re.compile(r"^deal[_: -]?hole", re.IGNORECASE),
+    re.compile(r"^show[_: -]?or[_: -]?muck[_: -]?hole", re.IGNORECASE),
+)
 
 
 class ProductionDatasetError(RuntimeError):
     pass
+
+
+def source_id_for_path(path):
+    resolved = str(Path(path).resolve())
+    digest = hashlib.sha256(resolved.encode("utf-8")).hexdigest()[:16]
+    return f"local:{Path(path).name}:{digest}"
 
 
 def iter_game_entries(game, input_paths, max_records=None):
@@ -44,7 +58,8 @@ def iter_game_entries(game, input_paths, max_records=None):
                 "tokens": tokens,
                 "metadata": {
                     **metadata,
-                    "source_path": str(path),
+                    "source_id": source_id_for_path(path),
+                    "source_name": path.name,
                 },
             }
             if max_records and emitted >= max_records:
@@ -64,7 +79,9 @@ def validate_entry(entry):
         raise ProductionDatasetError(f"{game} sequence has wrong game marker: {tokens[1]}")
     if any(not isinstance(token, str) or not token for token in tokens):
         raise ProductionDatasetError(f"{game} sequence contains an invalid token")
-    if game == "poker" and any(token.startswith("h:") or token.startswith("hole") for token in tokens):
+    if game == "poker" and any(
+        pattern.search(token) for token in tokens for pattern in PRIVATE_POKER_TOKEN_PATTERNS
+    ):
         raise ProductionDatasetError("Poker entry leaks private hole-card tokens")
 
 
@@ -86,6 +103,11 @@ class JsonlShardWriter:
     def _open_next(self):
         suffix = ".jsonl.gz" if self.compress else ".jsonl"
         self.current_path = self.output_dir / f"{self.game}-{self.shard_index:06d}{suffix}"
+        if self.current_path.exists():
+            raise ProductionDatasetError(
+                f"Refusing to overwrite existing shard: {self.current_path}. "
+                "Use a new output directory or implement an explicit resume manifest."
+            )
         self.current_raw_file = open(self.current_path, "wb")
         self.current_file = gzip.GzipFile(fileobj=self.current_raw_file, mode="wb") if self.compress else self.current_raw_file
         self.current_tokens = 0

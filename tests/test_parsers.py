@@ -9,6 +9,7 @@ from src.shogi_parser import parse_csa_to_tokens
 from src.go_parser import parse_sgf_to_tokens
 from src.othello_parser import parse_othello_pgn_to_tokens
 from src.poker_parser import PokerHandSimulator
+from src.poker_parser import parse_phh_to_tokens
 from src.tokenizer import UniversalGameTokenizer
 from src.download import safe_extract_zip
 from src.hf_uploader import HuggingFaceShardUploader
@@ -225,8 +226,43 @@ class TestUniversalGameParsers(unittest.TestCase):
                     self.assertFalse(any("deal_hole" in token for token in entry["tokens"]))
 
     def test_validate_entry_rejects_private_poker_tokens(self):
-        with self.assertRaises(ProductionDatasetError):
-            validate_entry({"game": "poker", "tokens": ["<bos>", "<poker>", "h:1:AhAd", "<eos>"]})
+        private_tokens = [
+            "h:1:AhAd",
+            "H:1:AhAd",
+            "hole_p1_ahad",
+            "deal_hole_p1_ahad",
+            "show_or_muck_hole_cards_p1_ahad",
+        ]
+        for token in private_tokens:
+            with self.subTest(token=token):
+                with self.assertRaises(ProductionDatasetError):
+                    validate_entry({"game": "poker", "tokens": ["<bos>", "<poker>", token, "<eos>"]})
+
+    def test_phh_parser_only_reads_actions_field(self):
+        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".phh") as f:
+            f.write('''venue = "quoted venue must not become action"\nplayers = ["Alice", "Bob"]\nactions = [\n  "deal_hole P1 AhAd",\n  "post_blind P1 50",\n  "post_blind P2 100",\n  "call P1"\n]\n''')
+            temp_path = f.name
+        try:
+            hands = list(parse_phh_to_tokens(temp_path))
+            self.assertEqual(len(hands), 1)
+            tokens, meta = hands[0]
+            self.assertNotIn("quoted_venue_must_not_become_action", tokens)
+            self.assertNotIn("alice", tokens)
+            self.assertNotIn("deal_hole_p1_ahad", tokens)
+            self.assertEqual(tokens[2:], ["post_blind_p1_50", "post_blind_p2_100", "call_p1", "<eos>"])
+            self.assertEqual(meta["private_actions_excluded"], 1)
+        finally:
+            os.remove(temp_path)
+
+    def test_production_shards_refuse_to_overwrite_existing_output(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            chess_path = os.path.join(temp_dir, "sample.pgn")
+            with open(chess_path, "w", encoding="utf-8") as f:
+                f.write("""[Event "Sample"]\n[White "A"]\n[Black "B"]\n[Result "1-0"]\n\n1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 4. Ba4 *""")
+            out_dir = os.path.join(temp_dir, "out")
+            build_game_shards("chess", [chess_path], out_dir, target_tokens=4, max_records=1)
+            with self.assertRaises(ProductionDatasetError):
+                build_game_shards("chess", [chess_path], out_dir, target_tokens=4, max_records=1)
 
 if __name__ == "__main__":
     unittest.main()
