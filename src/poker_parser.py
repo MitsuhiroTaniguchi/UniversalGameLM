@@ -448,7 +448,14 @@ def poker_view_entries(actions, state_tokens):
         return []
 
     completed_holes, deck = _complete_private_holes(actions, state_tokens, private_holes)
+    player_count = len(completed_holes)
+    if player_count < 2:
+        return []
+    view_rows_per_hand = player_count + 2
     base_metadata = {
+        "seat_count": player_count,
+        "player_count": player_count,
+        "view_rows_per_hand": view_rows_per_hand,
         "move_count": len(public_actions),
         "private_actions_excluded": private_excluded,
         "completion_policy": "uniform_unknown_cards_v1",
@@ -559,6 +566,8 @@ def parse_phh_to_tokens(phh_path, max_hands=None):
                     **view_metadata,
                     "source": "phh",
                     "filename": os.path.basename(source_file),
+                    "hand_index": parsed,
+                    "view_group_id": f"{Path(source_file).resolve()}#{parsed}",
                     "source_path": str(Path(source_file).resolve()),
                 }
                 yield tokens, metadata

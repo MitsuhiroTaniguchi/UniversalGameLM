@@ -14,6 +14,7 @@ from src.tokenizer import UniversalGameTokenizer
 from src.download import safe_extract_zip
 from src.hf_uploader import HuggingFaceShardUploader
 from src.production_pipeline import build_game_shards, validate_entry, ProductionDatasetError
+from src.stats import DatasetStatsAccumulator
 
 class TestUniversalGameParsers(unittest.TestCase):
     
@@ -287,6 +288,8 @@ class TestUniversalGameParsers(unittest.TestCase):
             self.assertNotIn("deal_hole_p1_ahad", tokens)
             self.assertEqual(tokens[2:], ["view_complete", "post_blind_p1_50", "post_blind_p2_100", "call_p1", "<eos>"])
             self.assertEqual(meta["view_type"], "complete")
+            self.assertEqual(meta["seat_count"], 2)
+            self.assertEqual(meta["view_rows_per_hand"], 4)
             self.assertEqual(meta["private_actions_excluded"], 1)
         finally:
             os.remove(temp_path)
@@ -317,6 +320,8 @@ actions = [
             views = {meta["view_type"]: (tokens, meta) for tokens, meta in hands if meta["view_type"] != "imperfect"}
             imperfect = {(meta["viewer_seat"]): (tokens, meta) for tokens, meta in hands if meta["view_type"] == "imperfect"}
             complete_tokens, complete_meta = views["complete"]
+            self.assertEqual(complete_meta["seat_count"], 2)
+            self.assertEqual(complete_meta["view_rows_per_hand"], 4)
             self.assertIn("view_complete", complete_tokens)
             self.assertIn("VARIANT:nt", complete_tokens)
             self.assertIn("p1_cc", complete_tokens)
@@ -332,6 +337,77 @@ actions = [
             self.assertIn("private_cards:p1:AhAd", omniscient_tokens)
             self.assertIn("private_cards:p2:KcKd", omniscient_tokens)
             self.assertTrue(any(token.startswith("deck:") for token in omniscient_tokens))
+
+    def test_poker_seat_count_scales_views_and_stats(self):
+        phh = """variant = 'NT'
+starting_stacks = [10000, 10000, 10000, 10000, 10000, 10000]
+actions = [
+  'd dh p1 AhAd',
+  'd dh p2 KcKd',
+  'd dh p3 QsQh',
+  'd dh p4 JcJd',
+  'd dh p5 TsTh',
+  'd dh p6 9c9d',
+  'p1 cc',
+  'p2 cc',
+  'p3 cc',
+  'p4 cc',
+  'p5 cc',
+  'p6 cbr 300',
+]
+"""
+        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".phh") as f:
+            f.write(phh)
+            temp_path = f.name
+        try:
+            hands = list(parse_phh_to_tokens(temp_path))
+            self.assertEqual(len(hands), 8)
+            self.assertTrue(all(meta["seat_count"] == 6 for _, meta in hands))
+            self.assertTrue(all(meta["view_rows_per_hand"] == 8 for _, meta in hands))
+
+            stats = DatasetStatsAccumulator()
+            for tokens, meta in hands:
+                stats.update({"game": "poker", "tokens": tokens, "metadata": meta})
+            summary = stats.summary()["poker"]["by_seat_count"]["6"]
+            self.assertEqual(summary["rows"], 8)
+            self.assertEqual(summary["views"], {"complete": 1, "imperfect": 6, "omniscient": 1})
+        finally:
+            os.remove(temp_path)
+
+    def test_poker_production_does_not_split_view_group_at_target(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            phh_path = os.path.join(temp_dir, "six.phh")
+            with open(phh_path, "w", encoding="utf-8") as f:
+                f.write("""variant = 'NT'
+starting_stacks = [10000, 10000, 10000, 10000, 10000, 10000]
+actions = [
+  'd dh p1 AhAd',
+  'd dh p2 KcKd',
+  'd dh p3 QsQh',
+  'd dh p4 JcJd',
+  'd dh p5 TsTh',
+  'd dh p6 9c9d',
+  'p1 cc',
+  'p2 cc',
+  'p3 cc',
+  'p4 cc',
+  'p5 cc',
+  'p6 cbr 300',
+]
+""")
+            result = build_game_shards(
+                "poker",
+                [phh_path],
+                os.path.join(temp_dir, "out"),
+                target_tokens=1,
+                max_records=1,
+            )
+            self.assertEqual(result["rows"], 8)
+            self.assertEqual(result["stats"]["by_seat_count"]["6"]["views"], {
+                "complete": 1,
+                "imperfect": 6,
+                "omniscient": 1,
+            })
 
     def test_shogi_parser_rejects_missing_terminal(self):
         with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".csa") as f:

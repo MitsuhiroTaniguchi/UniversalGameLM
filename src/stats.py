@@ -8,10 +8,14 @@ class DatasetStatsAccumulator:
         self.non_special_token_counts = collections.Counter()
         self.length_counts = collections.defaultdict(collections.Counter)
         self.move_counts = collections.defaultdict(collections.Counter)
+        self.seat_count_rows = collections.defaultdict(collections.Counter)
+        self.seat_count_tokens = collections.defaultdict(collections.Counter)
+        self.seat_count_views = collections.defaultdict(lambda: collections.defaultdict(collections.Counter))
 
     def update(self, item):
         game = item["game"]
         tokens = item["tokens"]
+        metadata = item.get("metadata") or {}
         self.game_counts[game] += 1
         self.token_counts[game] += len(tokens)
         self.length_counts[game][len(tokens)] += 1
@@ -19,6 +23,13 @@ class DatasetStatsAccumulator:
         moves = [t for t in tokens if not (t.startswith("<") and t.endswith(">"))]
         self.non_special_token_counts[game] += len(moves)
         self.move_counts[game].update(moves)
+        seat_count = metadata.get("seat_count")
+        if seat_count is not None:
+            seat_count = int(seat_count)
+            self.seat_count_rows[game][seat_count] += 1
+            self.seat_count_tokens[game][seat_count] += len(tokens)
+            view_type = metadata.get("view_type") or "unknown"
+            self.seat_count_views[game][seat_count][view_type] += 1
 
     def _median_length(self, game):
         total = self.game_counts[game]
@@ -57,6 +68,15 @@ class DatasetStatsAccumulator:
                 "non_special_tokens": self.non_special_token_counts[game],
                 "top_non_special_tokens": self.move_counts[game].most_common(10),
             }
+            if self.seat_count_rows.get(game):
+                games[game]["by_seat_count"] = {
+                    str(seat_count): {
+                        "rows": self.seat_count_rows[game][seat_count],
+                        "tokens": self.seat_count_tokens[game][seat_count],
+                        "views": dict(sorted(self.seat_count_views[game][seat_count].items())),
+                    }
+                    for seat_count in sorted(self.seat_count_rows[game])
+                }
         return games
 
     def print_report(self, target_tokens_per_game=None):
@@ -88,6 +108,10 @@ def print_dataset_stats(summary):
         print(f"    Median: {item['median_length']} tokens")
 
         print(f"  Unique Non-Special Tokens: {item['unique_non_special_tokens']}")
+        if item.get("by_seat_count"):
+            print("  By Seat Count:")
+            for seat_count, bucket in item["by_seat_count"].items():
+                print(f"    {seat_count} seats: {bucket['rows']} rows, {bucket['tokens']:,} tokens, views={bucket['views']}")
         print(f"  Top 10 Non-Special Tokens:")
         total_non_special = item["non_special_tokens"] or 1
         for move, freq in item["top_non_special_tokens"]:

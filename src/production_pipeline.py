@@ -268,7 +268,9 @@ def build_game_shards(
 
     try:
         for entry in iter_game_entries(game, input_paths, max_records=max_records):
-            if total_tokens >= target_tokens:
+            metadata = entry.get("metadata") or {}
+            starts_new_view_group = game != "poker" or metadata.get("view_type") == "complete"
+            if total_tokens >= target_tokens and starts_new_view_group:
                 break
             completed = writer.write(entry)
             stats.update(entry)

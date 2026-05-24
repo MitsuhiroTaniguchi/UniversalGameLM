@@ -99,3 +99,8 @@ pattern where each row is one tokenized view of one game:
 cards from PHH are fixed; unknown private cards and the remaining deck are sampled
 without replacement using `uniform_unknown_cards_v1`, with `completion_seed`
 stored in metadata for reproducibility.
+
+Poker rows also carry MahjongLM-style `seat_count` metadata. A hand with `N`
+players emits `N + 2` rows: one complete view, `N` imperfect views, and one
+omniscient view. Production stats report `by_seat_count` buckets so two-player,
+six-player, and larger table corpora can be balanced explicitly.
