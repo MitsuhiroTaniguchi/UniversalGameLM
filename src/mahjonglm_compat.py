@@ -64,30 +64,6 @@ def tokens_to_mahjonglm_stream(entry):
     return [rule_token, "view_complete"] + body
 
 
-def loss_mask_for_stream_tokens(stream_tokens):
-    """
-    Marks tokens that should contribute to causal-LM loss.
-
-    Rule/view selectors and random initial hidden information are conditioning
-    context, not action targets. Keeping them in the sequence preserves
-    MahjongLM-style views while avoiding wasted loss on unpredictable deals.
-    """
-    mask = []
-    for token in stream_tokens:
-        if (
-            token.startswith("rule_")
-            or token.startswith("view_")
-            or token.startswith("private_cards:")
-            or token.startswith("hand:")
-            or token.startswith("undealt_cards:")
-            or token.startswith("deck:")
-        ):
-            mask.append(0)
-        else:
-            mask.append(1)
-    return mask
-
-
 def normalize_mahjonglm_metadata(entry):
     game = entry["game"]
     metadata = entry.get("metadata") or {}
@@ -112,7 +88,6 @@ def entry_to_mahjonglm_row(entry, tokenizer):
     row = normalize_mahjonglm_metadata(entry)
     row["length"] = len(ids)
     row["input_ids"] = ids
-    row["loss_mask"] = loss_mask_for_stream_tokens(stream_tokens)
     row["tokenizer_fingerprint"] = tokenizer.fingerprint()
     return row
 

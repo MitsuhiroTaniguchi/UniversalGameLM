@@ -46,10 +46,8 @@ python3 build_production.py \
 
 `mahjonglm_jsonl` rows use the MahjongLM-compatible fields
 `game_id`, `year`, `seat_count`, `view_type`, `viewer_seat`, `length`,
-`input_ids`, and `loss_mask`. Boundary tokens are not serialized in `input_ids`;
-`<bos>` and `<eos>` remain training-time boundary tokens, matching MahjongLM's
-convention. `loss_mask` is `0` for rule/view selectors and unpredictable initial
-hidden information such as dealt hands, private cards, and undealt deck context.
+and `input_ids`. Boundary tokens are not serialized in `input_ids`; `<bos>` and
+`<eos>` remain training-time boundary tokens, matching MahjongLM's convention.
 The base MahjongLM token ids are preserved exactly, and new game tokens are
 appended at the end of the vocabulary.
 

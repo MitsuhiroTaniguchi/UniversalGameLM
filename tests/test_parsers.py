@@ -269,13 +269,12 @@ HA H9 H5 H2
             }
             self.assertEqual(tokens_to_mahjonglm_stream(entry), ["rule_chess", "view_complete", "e2e4", "e7e5", "g1f3", "b8c6"])
             row = entry_to_mahjonglm_row(entry, tokenizer)
-            self.assertEqual(set(row), {"game_id", "year", "seat_count", "view_type", "viewer_seat", "length", "input_ids", "loss_mask", "tokenizer_fingerprint"})
+            self.assertEqual(set(row), {"game_id", "year", "seat_count", "view_type", "viewer_seat", "length", "input_ids", "tokenizer_fingerprint"})
             self.assertEqual(row["year"], 2024)
             self.assertEqual(row["seat_count"], 2)
             self.assertEqual(row["view_type"], "complete")
             self.assertIsNone(row["viewer_seat"])
             self.assertEqual(row["length"], 6)
-            self.assertEqual(row["loss_mask"], [0, 0, 1, 1, 1, 1])
             self.assertEqual(row["tokenizer_fingerprint"], tokenizer.fingerprint())
             self.assertNotIn(tokenizer.vocab["<bos>"], row["input_ids"])
             self.assertNotIn(tokenizer.vocab["<eos>"], row["input_ids"])
@@ -614,13 +613,12 @@ actions = [
             )
             with gzip.open(result["shards"][0]["path"], "rt", encoding="utf-8") as f:
                 row = json.loads(f.readline())
-            self.assertEqual(set(row), {"game_id", "year", "seat_count", "view_type", "viewer_seat", "length", "input_ids", "loss_mask", "tokenizer_fingerprint"})
+            self.assertEqual(set(row), {"game_id", "year", "seat_count", "view_type", "viewer_seat", "length", "input_ids", "tokenizer_fingerprint"})
             self.assertEqual(row["year"], 2025)
             self.assertEqual(row["seat_count"], 2)
             self.assertEqual(row["view_type"], "complete")
             self.assertEqual(row["input_ids"][0], tokenizer.vocab["rule_chess"])
             self.assertEqual(row["input_ids"][1], tokenizer.vocab["view_complete"])
-            self.assertEqual(row["loss_mask"][:2], [0, 0])
             self.assertEqual(row["tokenizer_fingerprint"], result["tokenizer_fingerprint"])
 
     def test_shogi_parser_rejects_missing_terminal(self):
