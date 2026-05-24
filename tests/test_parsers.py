@@ -4,6 +4,7 @@ import tempfile
 import zipfile
 import gzip
 import json
+import re
 from src.chess_parser import parse_pgn_to_tokens
 from src.shogi_parser import parse_csa_to_tokens
 from src.go_parser import parse_sgf_to_tokens
@@ -161,10 +162,13 @@ class TestUniversalGameParsers(unittest.TestCase):
         tokens, meta = simulator.simulate_hand()
         self.assertEqual(tokens[0], "<bos>")
         self.assertEqual(tokens[1], "<poker>")
+        self.assertEqual(tokens[2], "view_complete")
         self.assertEqual(tokens[-1], "<eos>")
         self.assertFalse(any(t.startswith("H:") for t in tokens))
-        self.assertTrue(any(t.startswith("WINNER:") for t in tokens))
+        self.assertFalse(any(re.search(r"[br]\d+", t) for t in tokens))
+        self.assertTrue(any(t.startswith("winner:") for t in tokens))
         self.assertIsNotNone(meta["winner"])
+        validate_entry({"game": "poker", "tokens": tokens, "metadata": meta})
         self.assertEqual(meta["source"], "synthetic_simulator")
 
     def test_poker_score_compares_tie_breakers(self):
@@ -199,7 +203,7 @@ HA H9 H5 H2
             self.assertEqual(tokens[2], "view_complete")
             self.assertIn("dealer:N", tokens)
             self.assertIn("bid:1N", tokens)
-            self.assertIn("play:HA", tokens)
+            self.assertIn("play:S:Ah", tokens)
             self.assertEqual(meta["seat_count"], 4)
             self.assertFalse(any(token.startswith("hand:") for token in tokens))
             view_types = [entry_meta["view_type"] for _, entry_meta in boards]
@@ -265,12 +269,13 @@ HA H9 H5 H2
             }
             self.assertEqual(tokens_to_mahjonglm_stream(entry), ["rule_chess", "view_complete", "e2e4", "e7e5", "g1f3", "b8c6"])
             row = entry_to_mahjonglm_row(entry, tokenizer)
-            self.assertEqual(set(row), {"game_id", "year", "seat_count", "view_type", "viewer_seat", "length", "input_ids", "tokenizer_fingerprint"})
+            self.assertEqual(set(row), {"game_id", "year", "seat_count", "view_type", "viewer_seat", "length", "input_ids", "loss_mask", "tokenizer_fingerprint"})
             self.assertEqual(row["year"], 2024)
             self.assertEqual(row["seat_count"], 2)
             self.assertEqual(row["view_type"], "complete")
             self.assertIsNone(row["viewer_seat"])
             self.assertEqual(row["length"], 6)
+            self.assertEqual(row["loss_mask"], [0, 0, 1, 1, 1, 1])
             self.assertEqual(row["tokenizer_fingerprint"], tokenizer.fingerprint())
             self.assertNotIn(tokenizer.vocab["<bos>"], row["input_ids"])
             self.assertNotIn(tokenizer.vocab["<eos>"], row["input_ids"])
@@ -400,15 +405,22 @@ HA H9 H5 H2
             temp_path = f.name
         try:
             hands = list(parse_phh_to_tokens(temp_path))
-            self.assertEqual(len(hands), 4)
+            self.assertEqual(len(hands), 2)
             tokens, meta = hands[0]
             self.assertNotIn("quoted_venue_must_not_become_action", tokens)
             self.assertNotIn("alice", tokens)
             self.assertNotIn("deal_hole_p1_ahad", tokens)
-            self.assertEqual(tokens[2:], ["view_complete", "post_blind_p1_50", "post_blind_p2_100", "call_p1", "<eos>"])
+            self.assertEqual(tokens[2:], [
+                "view_complete",
+                "act:post_blind", "seat:p1", "AMT:5", "AMT:0",
+                "act:post_blind", "seat:p2", "AMT:1", "AMT:0", "AMT:0",
+                "act:call", "seat:p1",
+                "<eos>",
+            ])
             self.assertEqual(meta["view_type"], "complete")
             self.assertEqual(meta["seat_count"], 2)
-            self.assertEqual(meta["view_rows_per_hand"], 4)
+            self.assertEqual(meta["view_rows_per_hand"], 2)
+            self.assertEqual(meta["missing_private_seats"], [2])
             self.assertEqual(meta["private_actions_excluded"], 1)
         finally:
             os.remove(temp_path)
@@ -469,9 +481,11 @@ actions = [
             self.assertEqual(complete_meta["view_rows_per_hand"], 4)
             self.assertIn("view_complete", complete_tokens)
             self.assertIn("VARIANT:nt", complete_tokens)
-            self.assertIn("p1_cc", complete_tokens)
-            self.assertIn("p2_cbr_300", complete_tokens)
-            self.assertIn("p1_sm_hidden", complete_tokens)
+            self.assertIn("STARTING_STACKS:BEGIN", complete_tokens)
+            self.assertIn("act:cc", complete_tokens)
+            self.assertIn("act:cbr", complete_tokens)
+            self.assertIn("AMT:3", complete_tokens)
+            self.assertIn("act:hidden", complete_tokens)
             self.assertFalse(any("AhAd" in token or "KcKd" in token for token in complete_tokens))
             self.assertEqual(complete_meta["private_actions_excluded"], 2)
             self.assertIn("private_cards:p1:AhAd", imperfect[1][0])
@@ -481,7 +495,7 @@ actions = [
             self.assertIn("view_omniscient", omniscient_tokens)
             self.assertIn("private_cards:p1:AhAd", omniscient_tokens)
             self.assertIn("private_cards:p2:KcKd", omniscient_tokens)
-            self.assertTrue(any(token.startswith("deck:") for token in omniscient_tokens))
+            self.assertTrue(any(token.startswith("undealt_cards:") for token in omniscient_tokens))
 
     def test_poker_seat_count_scales_views_and_stats(self):
         phh = """variant = 'NT'
@@ -600,12 +614,13 @@ actions = [
             )
             with gzip.open(result["shards"][0]["path"], "rt", encoding="utf-8") as f:
                 row = json.loads(f.readline())
-            self.assertEqual(set(row), {"game_id", "year", "seat_count", "view_type", "viewer_seat", "length", "input_ids", "tokenizer_fingerprint"})
+            self.assertEqual(set(row), {"game_id", "year", "seat_count", "view_type", "viewer_seat", "length", "input_ids", "loss_mask", "tokenizer_fingerprint"})
             self.assertEqual(row["year"], 2025)
             self.assertEqual(row["seat_count"], 2)
             self.assertEqual(row["view_type"], "complete")
             self.assertEqual(row["input_ids"][0], tokenizer.vocab["rule_chess"])
             self.assertEqual(row["input_ids"][1], tokenizer.vocab["view_complete"])
+            self.assertEqual(row["loss_mask"][:2], [0, 0])
             self.assertEqual(row["tokenizer_fingerprint"], result["tokenizer_fingerprint"])
 
     def test_shogi_parser_rejects_missing_terminal(self):

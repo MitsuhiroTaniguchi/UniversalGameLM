@@ -45,9 +45,11 @@ python3 build_production.py \
 ```
 
 `mahjonglm_jsonl` rows use the MahjongLM-compatible fields
-`game_id`, `year`, `seat_count`, `view_type`, `viewer_seat`, `length`, and
-`input_ids`. Boundary tokens are not serialized in `input_ids`; `<bos>` and
-`<eos>` remain training-time boundary tokens, matching MahjongLM's convention.
+`game_id`, `year`, `seat_count`, `view_type`, `viewer_seat`, `length`,
+`input_ids`, and `loss_mask`. Boundary tokens are not serialized in `input_ids`;
+`<bos>` and `<eos>` remain training-time boundary tokens, matching MahjongLM's
+convention. `loss_mask` is `0` for rule/view selectors and unpredictable initial
+hidden information such as dealt hands, private cards, and undealt deck context.
 The base MahjongLM token ids are preserved exactly, and new game tokens are
 appended at the end of the vocabulary.
 
@@ -75,7 +77,8 @@ The production path validates every serialized row:
 - shogi requires valid USI moves and explicit terminal reason tokens
 - Go requires `SZ:*`, in-range coordinates, and rejects SGF variations
 - Othello move streams are replayed against an 8x8 board for legality
-- poker private hole-card deal tokens are rejected, including canonical PHH `d dh`
+- poker private hole-card deal actions are excluded from complete views; observed
+  private cards are only emitted in the corresponding imperfect/omniscient views
 - shards are written to temporary files, atomically renamed, and reported with checksums before upload/delete
 
 Supported production input forms include:
@@ -114,23 +117,26 @@ pattern where each row is one tokenized view of one game:
 
 - `view_complete`: public/recorded hand history only. Private `d dh` hole-card deals are excluded.
 - `view_imperfect_pN`: player `pN` perspective. It adds exactly that player's private cards to the complete public stream.
-- `view_omniscient`: complete stream plus all player private cards and a deterministic sampled full-deck completion.
+- `view_omniscient`: emitted only when every inferred active player has observed private cards in the PHH record. It contains those true private cards plus a deterministic `undealt_cards:*` set, not a sampled private-hand completion.
 
-`view_omniscient` is a consistent completion of the observed hand history. Known
-cards from PHH are fixed; unknown private cards and the remaining deck are sampled
-without replacement using `uniform_unknown_cards_v1`, with `completion_seed`
-stored in metadata for reproducibility.
+Unknown private hands are not sampled. This avoids teaching the model false
+hand/action correlations when a folded or unshown hand is absent from the source
+record. Poker numeric amounts are split into shared digit tokens (`AMT:*` for
+actions and `NUM:*` for state values) to avoid one token per stack or bet size.
 
 Poker rows also carry MahjongLM-style `seat_count` metadata. A hand with `N`
-players emits `N + 2` rows: one complete view, `N` imperfect views, and one
-omniscient view. Production stats report `by_seat_count` buckets so two-player,
-six-player, and larger table corpora can be balanced explicitly.
+players emits one complete view, one imperfect view per observed private hand,
+and an omniscient view only if all active private hands are observed. Production
+stats report `by_seat_count` buckets so two-player, six-player, and larger table
+corpora can be balanced explicitly.
 
 ## Bridge
 
 Contract bridge ingestion supports PBN records with `Deal`, `Auction`, and
-optional `Play` sections. Bridge rows currently use `view_complete` only and
-carry `seat_count=4`. The source plan prioritizes top-level World Championship,
-NABC, Bermuda Bowl, Venice Cup, Vanderbilt, and BBO/Vugraph archives; the curated
-top-event PBN sources are high quality but may need large public Vugraph archive
+optional `Play` sections. Bridge rows emit `view_complete`, four
+`view_imperfect_*` rows, and `view_omniscient`; play tokens include the acting
+seat (`play:N:As`) and cards use the same rank+suit notation as poker. The source
+plan prioritizes top-level World Championship, NABC, Bermuda Bowl, Venice Cup,
+Vanderbilt, and BBO/Vugraph archives; the curated top-event PBN sources are high
+quality but may need large public Vugraph archive
 supplementation to reach the 3B-token target.

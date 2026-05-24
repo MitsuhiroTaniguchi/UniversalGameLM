@@ -6,9 +6,9 @@ from pathlib import Path
 SEATS = ("N", "E", "S", "W")
 SUITS = ("S", "H", "D", "C")
 RANKS = "AKQJT98765432"
-ALL_CARDS = {f"{s}{r}" for s in SUITS for r in RANKS}
+ALL_CARDS = {f"{r}{s.lower()}" for s in SUITS for r in RANKS}
 CALL_RE = re.compile(r"^(?:PASS|P|X|XX|DBL|RDBL|[1-7](?:C|D|H|S|N|NT))$", re.IGNORECASE)
-CARD_RE = re.compile(r"^[SHDC][AKQJT98765432]$", re.IGNORECASE)
+CARD_RE = re.compile(r"^(?:[SHDC][AKQJT98765432]|[AKQJT98765432][shdc])$", re.IGNORECASE)
 STRAIN_ORDER = {"C": 0, "D": 1, "H": 2, "S": 3, "N": 4}
 
 
@@ -27,7 +27,9 @@ def _canonical_card(raw):
     card = raw.strip().upper()
     if not CARD_RE.fullmatch(card):
         raise ValueError(f"Invalid bridge card token: {raw}")
-    return card
+    if card[0] in "SHDC":
+        return card[1] + card[0].lower()
+    return card[0] + card[1].lower()
 
 
 def _parse_tags(block):
@@ -61,7 +63,7 @@ def _parse_deal(deal):
                     continue
                 if rank not in RANKS:
                     raise ValueError(f"Invalid bridge rank: {rank}")
-                cards.append(f"{suit}{rank}")
+                cards.append(f"{rank}{suit.lower()}")
         if len(cards) != 13:
             raise ValueError(f"Bridge hand for {seat} has {len(cards)} cards")
         hands[seat] = cards
@@ -190,21 +192,42 @@ def _validate_play(played_cards, hands, leader):
     current_leader = leader
     for trick_start in range(0, len(played_cards), 4):
         trick_cards = played_cards[trick_start:trick_start + 4]
-        led_suit = trick_cards[0][0]
+        led_suit = trick_cards[0][1]
         trick = []
         for offset, card in enumerate(trick_cards):
             seat = SEATS[(SEATS.index(current_leader) + offset) % 4]
             if card not in remaining[seat]:
                 raise ValueError(f"{seat} cannot play {card}")
-            if card[0] != led_suit and any(c[0] == led_suit for c in remaining[seat]):
+            if card[1] != led_suit and any(c[1] == led_suit for c in remaining[seat]):
                 raise ValueError(f"{seat} revoked on {card}")
             remaining[seat].remove(card)
             trick.append((seat, card))
         current_leader = min(
-            (item for item in trick if item[1][0] == led_suit),
-            key=lambda item: RANKS.index(item[1][1]),
+            (item for item in trick if item[1][1] == led_suit),
+            key=lambda item: RANKS.index(item[1][0]),
         )[0]
     return True
+
+
+def _annotated_play(played_cards, hands, leader):
+    _validate_play(played_cards, hands, leader)
+    annotated = []
+    if not played_cards:
+        return annotated
+    current_leader = leader
+    for trick_start in range(0, len(played_cards), 4):
+        trick_cards = played_cards[trick_start:trick_start + 4]
+        led_suit = trick_cards[0][1]
+        trick = []
+        for offset, card in enumerate(trick_cards):
+            seat = SEATS[(SEATS.index(current_leader) + offset) % 4]
+            annotated.append((seat, card))
+            trick.append((seat, card))
+        current_leader = min(
+            (item for item in trick if item[1][1] == led_suit),
+            key=lambda item: RANKS.index(item[1][0]),
+        )[0]
+    return annotated
 
 
 def _bridge_block_to_tokens(block, source_path):
@@ -218,7 +241,7 @@ def _bridge_block_to_tokens(block, source_path):
     _validate_auction(calls, auction_starter)
     played_cards = _parse_play(block, tags)
     play_starter = _section_starter(tags, "Play", None)
-    _validate_play(played_cards, hands, play_starter)
+    played_by_seat = _annotated_play(played_cards, hands, play_starter)
     if len(calls) < 4 and not played_cards:
         return None
 
@@ -238,7 +261,7 @@ def _bridge_block_to_tokens(block, source_path):
     if play_starter:
         context_tokens.append(f"play_leader:{play_starter}")
     context_tokens.extend(f"bid:{call}" for call in calls)
-    context_tokens.extend(f"play:{card}" for card in played_cards)
+    context_tokens.extend(f"play:{seat}:{card}" for seat, card in played_by_seat)
 
     base_metadata = {
         "event": tags.get("Event", "Unknown"),

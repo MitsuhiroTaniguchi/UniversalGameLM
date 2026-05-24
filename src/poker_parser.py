@@ -140,13 +140,13 @@ class PokerHandSimulator:
             hands[s] = [deck.pop(), deck.pop()]
             
         # State tokens list
-        tokens = ["<bos>", "<poker>"]
+        tokens = ["<bos>", "<poker>", "view_complete"]
         
         # 2. Blinds Posting. Hole cards are intentionally not emitted here:
         # pre-showdown action tokens must not leak hidden information.
         sb_amt, bb_amt = 10, 20
-        tokens.append(f"SB:{sb_amt}")
-        tokens.append(f"BB:{bb_amt}")
+        tokens.extend(["street:preflop", "seat:p1", "act:small_blind"] + _number_digit_tokens("AMT", sb_amt))
+        tokens.extend(["seat:p2", "act:big_blind"] + _number_digit_tokens("AMT", bb_amt))
         
         # Community Cards
         flop = [deck.pop(), deck.pop(), deck.pop()]
@@ -170,44 +170,44 @@ class PokerHandSimulator:
             is_pair = (card1_val == card2_val)
             
             if is_strong or is_pair:
-                action = "c"  # call
+                action_tokens = ["act:call"]
                 if is_pair and card1_val in "AKQJ":
-                    action = "r60"  # raise to 60
+                    action_tokens = ["act:raise"] + _number_digit_tokens("AMT", 60)
             else:
-                action = "f"  # fold
+                action_tokens = ["act:fold"]
                 active_players.remove(s)
                 
-            tokens.append(f"P:{s}:{action}")
+            tokens.extend([f"seat:p{s}"] + action_tokens)
             
         # Flop betting round (if at least 2 active players left)
         if len(active_players) >= 2:
-            tokens.append(f"FLOP:{flop[0]}{flop[1]}{flop[2]}")
+            tokens.extend(["street:flop"] + [f"card:{card}" for card in flop])
             # Simulate check/bet
             for s in list(active_players):
                 # Simple flop decisions
                 has_pair = hands[s][0][0] in [c[0] for c in flop] or hands[s][1][0] in [c[0] for c in flop]
                 if has_pair:
-                    action = "b40"  # bet 40
+                    action_tokens = ["act:bet"] + _number_digit_tokens("AMT", 40)
                 else:
-                    action = "k"  # check
-                tokens.append(f"F:{s}:{action}")
+                    action_tokens = ["act:check"]
+                tokens.extend([f"seat:p{s}"] + action_tokens)
                 
         # Turn betting round
         if len(active_players) >= 2:
-            tokens.append(f"TURN:{turn[0]}")
+            tokens.extend(["street:turn", f"card:{turn[0]}"])
             for s in list(active_players):
-                tokens.append(f"T:{s}:k")
+                tokens.extend([f"seat:p{s}", "act:check"])
                 
         # River betting round
         if len(active_players) >= 2:
-            tokens.append(f"RIVER:{river[0]}")
+            tokens.extend(["street:river", f"card:{river[0]}"])
             # Final river decisions: aggressive bet from BTN or SB
             for s in list(active_players):
                 if s == active_players[-1]:
-                    action = "b100"
+                    action_tokens = ["act:bet"] + _number_digit_tokens("AMT", 100)
                 else:
-                    action = "c"
-                tokens.append(f"R:{s}:{action}")
+                    action_tokens = ["act:call"]
+                tokens.extend([f"seat:p{s}"] + action_tokens)
                 
         # Showdown & Determine Winner
         winner = None
@@ -217,13 +217,13 @@ class PokerHandSimulator:
             # Evaluate hands
             best_score = None
             for s in active_players:
-                tokens.append(f"SHOW:{s}:{hands[s][0]}{hands[s][1]}")
+                tokens.extend([f"showdown:p{s}", f"card:{hands[s][0]}", f"card:{hands[s][1]}"])
                 score = self._score_key(self.get_best_hand(hands[s], flop + turn + river))
                 if best_score is None or score > best_score:
                     best_score = score
                     winner = s
                     
-        tokens.append(f"WINNER:{winner}")
+        tokens.append(f"winner:p{winner}")
         tokens.append("<eos>")
         
         metadata = {
@@ -233,7 +233,10 @@ class PokerHandSimulator:
             "river": river[0],
             "winner": f"Player {winner}",
             "source": "synthetic_simulator",
-            "move_count": len(tokens) - 3 # excluding bos/eos/game token
+            "seat_count": self.num_seats,
+            "view_type": "complete",
+            "viewer_seat": None,
+            "move_count": len(tokens) - 4 # excluding bos/eos/game/view tokens
         }
         
         return tokens, metadata
@@ -252,6 +255,32 @@ def _sanitize_poker_action(action):
     action = re.sub(r"#.*$", "", action.strip())
     action = re.sub(r"\s+", "_", action.lower())
     return re.sub(r"[^a-z0-9_:\-.]+", "", action)
+
+
+def _number_digit_tokens(prefix, value):
+    text = str(value)
+    tokens = []
+    for char in text:
+        if char.isdigit():
+            tokens.append(f"{prefix}:{char}")
+        elif char == ".":
+            tokens.append(f"{prefix}:dot")
+        elif char == "-":
+            tokens.append(f"{prefix}:neg")
+    return tokens or [f"{prefix}:0"]
+
+
+def _structured_value_tokens(field, value):
+    tokens = [f"{field.upper()}:BEGIN"]
+    if isinstance(value, (list, tuple)):
+        for index, item in enumerate(value):
+            if index:
+                tokens.append(f"{field.upper()}:SEP")
+            tokens.extend(_number_digit_tokens("NUM", item))
+    else:
+        tokens.extend(_number_digit_tokens("NUM", value))
+    tokens.append(f"{field.upper()}:END")
+    return tokens
 
 def _is_public_phh_action(action):
     normalized = action.strip().lower()
@@ -321,8 +350,7 @@ def _phh_state_tokens(text):
     for field in ("antes", "blinds_or_straddles", "min_bet", "starting_stacks"):
         value = _parse_phh_scalar(text, field)
         if value is not None:
-            compact = re.sub(r"\s+", "", repr(value).lower())
-            tokens.append(f"{field.upper()}:{compact}")
+            tokens.extend(_structured_value_tokens(field, value))
     return tokens
 
 
@@ -371,17 +399,37 @@ def _players_from_state_and_actions(state_tokens, actions, private_holes):
     return sorted(seats)
 
 
-def _public_action_token(action):
+def _public_action_tokens(action):
     if not _is_supported_public_action(action):
         if _extract_cards(action):
             raise ValueError(f"Rejecting unknown card-bearing PHH action: {action}")
-        return None
+        return []
     sanitized = _sanitize_poker_action(action)
     if not sanitized:
-        return None
+        return []
     if re.match(r"^p\d+_sm_-?$", sanitized):
-        return sanitized.replace("_-", "_hidden")
-    return sanitized
+        sanitized = sanitized.replace("_-", "_hidden")
+    parts = [part for part in sanitized.split("_") if part]
+    tokens = []
+    index = 0
+    while index < len(parts):
+        part = parts[index]
+        if re.fullmatch(r"p\d+", part):
+            tokens.append(f"seat:{part}")
+        elif re.fullmatch(r"\d+(?:\.\d+)?", part):
+            tokens.extend(_number_digit_tokens("AMT", part))
+        elif CARD_RE.fullmatch(part):
+            tokens.append(f"card:{_normalize_card(part)}")
+        elif part in {"post", "blind", "ante"} and index + 1 < len(parts):
+            tokens.append(f"act:{part}_{parts[index + 1]}")
+            index += 1
+        elif part in {"deal", "board"} and index + 1 < len(parts):
+            tokens.append(f"act:{part}_{parts[index + 1]}")
+            index += 1
+        else:
+            tokens.append(f"act:{part}")
+        index += 1
+    return tokens
 
 
 def _is_supported_public_action(action):
@@ -420,24 +468,17 @@ def _completion_seed(actions, state_tokens):
     return int(digest[:16], 16)
 
 
-def _complete_private_holes(actions, state_tokens, private_holes):
+def _observed_private_holes(actions, state_tokens, private_holes):
     public_cards = _observed_cards_from_public_actions(actions)
     known_private_cards = [card for cards in private_holes.values() for card in cards]
     _assert_unique_cards(public_cards + known_private_cards)
     players = _players_from_state_and_actions(state_tokens, actions, private_holes)
-    used = set(public_cards + known_private_cards)
-    available = [card for card in FULL_DECK if card not in used]
-    rng = random.Random(_completion_seed(actions, state_tokens))
-    rng.shuffle(available)
-
-    completed = {seat: list(cards) for seat, cards in private_holes.items()}
-    for seat in players:
-        if seat not in completed:
-            completed[seat] = [available.pop(), available.pop()]
-
-    deck = public_cards + [card for seat in players for card in completed[seat]] + available
-    _assert_unique_cards(deck)
-    return completed, deck
+    missing = [seat for seat in players if seat not in private_holes]
+    undealt_cards = [
+        card for card in FULL_DECK
+        if card not in set(public_cards + known_private_cards)
+    ]
+    return {seat: list(cards) for seat, cards in private_holes.items()}, undealt_cards, players, missing
 
 
 def _bracket_delta_outside_strings(line):
@@ -480,25 +521,25 @@ def poker_view_entries(actions, state_tokens):
         if not _is_public_phh_action(action):
             private_excluded += 1
             continue
-        token = _public_action_token(action)
-        if token:
-            public_actions.append(token)
+        public_actions.extend(_public_action_tokens(action))
 
     if len(public_actions) < 2:
         return []
 
-    completed_holes, deck = _complete_private_holes(actions, state_tokens, private_holes)
-    player_count = len(completed_holes)
+    observed_holes, undealt_cards, players, missing_private_seats = _observed_private_holes(actions, state_tokens, private_holes)
+    player_count = len(players)
     if player_count < 2:
         return []
-    view_rows_per_hand = player_count + 2
+    has_omniscient = not missing_private_seats and len(observed_holes) == player_count
+    view_rows_per_hand = 1 + len(observed_holes) + (1 if has_omniscient else 0)
     base_metadata = {
         "seat_count": player_count,
         "player_count": player_count,
         "view_rows_per_hand": view_rows_per_hand,
         "move_count": len(public_actions),
         "private_actions_excluded": private_excluded,
-        "completion_policy": "uniform_unknown_cards_v1",
+        "completion_policy": "observed_private_only_v1",
+        "missing_private_seats": missing_private_seats,
         "completion_seed": _completion_seed(actions, state_tokens),
     }
 
@@ -509,8 +550,8 @@ def poker_view_entries(actions, state_tokens):
         )
     ]
 
-    for seat in sorted(completed_holes):
-        hole_token = f"private_cards:p{seat}:{_cards_token(completed_holes[seat])}"
+    for seat in sorted(observed_holes):
+        hole_token = f"private_cards:p{seat}:{_cards_token(observed_holes[seat])}"
         entries.append(
             (
                 ["<bos>", "<poker>", f"view_imperfect_p{seat}", hole_token] + state_tokens + public_actions + ["<eos>"],
@@ -518,21 +559,22 @@ def poker_view_entries(actions, state_tokens):
             )
         )
 
-    private_tokens = [
-        f"private_cards:p{seat}:{_cards_token(cards)}"
-        for seat, cards in sorted(completed_holes.items())
-    ]
-    entries.append(
-        (
-            ["<bos>", "<poker>", "view_omniscient"]
-            + private_tokens
-            + [f"deck:{_cards_token(deck)}"]
-            + state_tokens
-            + public_actions
-            + ["<eos>"],
-            {**base_metadata, "view_type": "omniscient", "viewer_seat": None},
+    if has_omniscient:
+        private_tokens = [
+            f"private_cards:p{seat}:{_cards_token(cards)}"
+            for seat, cards in sorted(observed_holes.items())
+        ]
+        entries.append(
+            (
+                ["<bos>", "<poker>", "view_omniscient"]
+                + private_tokens
+                + [f"undealt_cards:{_cards_token(undealt_cards)}"]
+                + state_tokens
+                + public_actions
+                + ["<eos>"],
+                {**base_metadata, "view_type": "omniscient", "viewer_seat": None},
+            )
         )
-    )
     return entries
 
 def iter_phh_action_lists(phh_path):

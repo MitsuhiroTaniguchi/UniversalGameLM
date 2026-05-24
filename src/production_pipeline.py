@@ -168,11 +168,11 @@ def validate_entry(entry):
             private_tokens = [token for token in tokens if token.startswith("private_cards:")]
             if len(private_tokens) != 1 or not private_tokens[0].startswith(f"private_cards:{viewer}:"):
                 raise ProductionDatasetError("Poker imperfect view must contain exactly the viewer's private cards")
-            if any(token.startswith("deck:") for token in tokens):
+            if any(token.startswith(("deck:", "undealt_cards:")) for token in tokens):
                 raise ProductionDatasetError("Poker imperfect view cannot contain deck tokens")
         elif tokens[2] == "view_omniscient":
-            if not any(token.startswith("deck:") for token in tokens):
-                raise ProductionDatasetError("Poker omniscient view is missing sampled deck token")
+            if not any(token.startswith("undealt_cards:") for token in tokens):
+                raise ProductionDatasetError("Poker omniscient view is missing undealt-card token")
         else:
             raise ProductionDatasetError(f"Unknown poker view token: {tokens[2]}")
     if game == "bridge":
@@ -199,12 +199,13 @@ def validate_entry(entry):
         if tokens[2] == "view_omniscient" and (len(cards) != 52 or len(set(cards)) != 52):
             raise ProductionDatasetError("Bridge entry must contain 52 unique dealt cards")
         for card in cards:
-            if not re.fullmatch(r"[SHDC][AKQJT98765432]", card):
+            if not re.fullmatch(r"[AKQJT98765432][shdc]", card):
                 raise ProductionDatasetError(f"Invalid bridge card: {card}")
         dealer = None
         play_leader = None
         calls = []
         played_cards = []
+        played_seats = []
         for token in tokens[3:-1]:
             if token.startswith("dealer:"):
                 dealer = token.split(":", 1)[1]
@@ -221,9 +222,15 @@ def validate_entry(entry):
                 calls.append(call)
                 continue
             if token.startswith("play:"):
-                card = token.split(":", 1)[1]
-                if not re.fullmatch(r"[SHDC][AKQJT98765432]", card):
+                parts = token.split(":")
+                if len(parts) != 3:
                     raise ProductionDatasetError(f"Invalid bridge play token: {token}")
+                _, seat, card = parts
+                if seat not in {"N", "E", "S", "W"}:
+                    raise ProductionDatasetError(f"Invalid bridge play seat: {token}")
+                if not re.fullmatch(r"[AKQJT98765432][shdc]", card):
+                    raise ProductionDatasetError(f"Invalid bridge play token: {token}")
+                played_seats.append(seat)
                 played_cards.append(card)
                 continue
             raise ProductionDatasetError(f"Invalid bridge token: {token}")
@@ -233,6 +240,19 @@ def validate_entry(entry):
                 raise ProductionDatasetError("Bridge play tokens without hidden hands must come from a validated parser")
             if tokens[2] == "view_omniscient" and played_cards:
                 validate_bridge_play(played_cards, hands, play_leader)
+                if play_leader:
+                    expected_seats = []
+                    leader = play_leader
+                    for trick_start in range(0, len(played_cards), 4):
+                        trick_cards = played_cards[trick_start:trick_start + 4]
+                        expected_seats.extend(["N", "E", "S", "W"][("NESW".index(leader) + offset) % 4] for offset in range(4))
+                        led_suit = trick_cards[0][1]
+                        leader = min(
+                            zip(expected_seats[-4:], trick_cards),
+                            key=lambda item: "AKQJT98765432".index(item[1][0]) if item[1][1] == led_suit else 99,
+                        )[0]
+                    if played_seats != expected_seats:
+                        raise ProductionDatasetError("Bridge play seat annotations do not match trick order")
         except Exception as exc:
             raise ProductionDatasetError(f"Invalid bridge sequence: {exc}") from exc
 
