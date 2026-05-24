@@ -369,6 +369,14 @@ def _cards_token(cards):
     return "".join(cards)
 
 
+def _private_card_tokens(seat, cards):
+    return [f"private_card:p{seat}:{card}" for card in cards]
+
+
+def _undealt_card_tokens(cards):
+    return [f"undealt_card:{card}" for card in cards]
+
+
 def _seat_from_action(action):
     match = re.search(r"\bp(\d+)\b", action.lower())
     return int(match.group(1)) if match else None
@@ -565,24 +573,26 @@ def poker_view_entries(actions, state_tokens):
     ]
 
     for seat in sorted(observed_holes):
-        hole_token = f"private_cards:p{seat}:{_cards_token(observed_holes[seat])}"
         entries.append(
             (
-                ["<bos>", "<poker>", f"view_imperfect_p{seat}", hole_token] + state_tokens + public_actions + ["<eos>"],
+                ["<bos>", "<poker>", f"view_imperfect_p{seat}"]
+                + _private_card_tokens(seat, observed_holes[seat])
+                + state_tokens
+                + public_actions
+                + ["<eos>"],
                 {**base_metadata, "view_type": "imperfect", "viewer_seat": seat},
             )
         )
 
     if has_omniscient:
-        private_tokens = [
-            f"private_cards:p{seat}:{_cards_token(cards)}"
-            for seat, cards in sorted(observed_holes.items())
-        ]
+        private_tokens = []
+        for seat, cards in sorted(observed_holes.items()):
+            private_tokens.extend(_private_card_tokens(seat, cards))
         entries.append(
             (
                 ["<bos>", "<poker>", "view_omniscient"]
                 + private_tokens
-                + [f"undealt_cards:{_cards_token(undealt_cards)}"]
+                + _undealt_card_tokens(undealt_cards)
                 + state_tokens
                 + public_actions
                 + ["<eos>"],
@@ -609,7 +619,6 @@ def iter_phh_action_lists(phh_path):
                         actions = _extract_actions_literals(text)
                         if actions:
                             yield actions, _phh_state_tokens(text)
-                        state_lines = []
                         action_lines = []
                         in_actions = False
                 else:
@@ -623,7 +632,6 @@ def iter_phh_action_lists(phh_path):
                 actions = _extract_actions_literals(text)
                 if actions:
                     yield actions, _phh_state_tokens(text)
-                state_lines = []
                 action_lines = []
                 in_actions = False
 

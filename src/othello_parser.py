@@ -69,7 +69,7 @@ def apply_move(board, color, move):
         board[cy][cx] = color
 
 
-def validate_othello_moves(moves):
+def validate_othello_moves(moves, require_terminal=True):
     board = _initial_board()
     color = "B"
     consecutive_passes = 0
@@ -93,7 +93,7 @@ def validate_othello_moves(moves):
             if remaining:
                 raise ValueError("Moves after double pass are not allowed")
             break
-    if legal_moves(board, "B") or legal_moves(board, "W"):
+    if require_terminal and (legal_moves(board, "B") or legal_moves(board, "W")):
         raise ValueError("Othello game is not terminal")
     return canonical_moves
 
@@ -121,8 +121,8 @@ def _moves_from_pgn_body(body):
     return [m.lower() for m in candidates]
 
 
-def tokens_from_othello_moves(moves):
-    canonical = validate_othello_moves([str(m).lower() for m in moves])
+def tokens_from_othello_moves(moves, require_terminal=True):
+    canonical = validate_othello_moves([str(m).lower() for m in moves], require_terminal=require_terminal)
     if len(canonical) < 8:
         raise ValueError("Othello game is too short")
     return ["<bos>", "<othello>"] + canonical + ["<eos>"]

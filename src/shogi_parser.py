@@ -17,6 +17,18 @@ TERMINAL_MARKERS = {
     "%CHUDAN": "interrupted",
 }
 
+STANDARD_CSA_BOARD_LINES = {
+    "P1-KY-KE-GI-KI-OU-KI-GI-KE-KY",
+    "P2 * -HI * * * * * -KA *",
+    "P3-FU-FU-FU-FU-FU-FU-FU-FU-FU",
+    "P4 * * * * * * * * *",
+    "P5 * * * * * * * * *",
+    "P6 * * * * * * * * *",
+    "P7+FU+FU+FU+FU+FU+FU+FU+FU+FU",
+    "P8 * +KA * * * * * +HI *",
+    "P9+KY+KE+GI+KI+OU+KI+GI+KE+KY",
+}
+
 
 def _read_csa_text(csa_path):
     path = Path(csa_path)
@@ -60,6 +72,9 @@ def _collapse_explicit_standard_board(csa_text):
     board_lines = [line for line in lines if re.match(r"^P[1-9]", line.strip())]
     if not board_lines:
         return csa_text
+    normalized_board = {re.sub(r"\s+", " ", line.strip()) for line in board_lines}
+    if normalized_board != STANDARD_CSA_BOARD_LINES or len(board_lines) != 9:
+        raise ValueError("Explicit CSA board is not the standard hirate initial position")
     collapsed = []
     inserted = False
     for line in lines:

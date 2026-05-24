@@ -170,6 +170,10 @@ class TestUniversalGameParsers(unittest.TestCase):
                 "tokens": ["<bos>", "<othello>", "f5", "f5", "c3", "d3", "<eos>"],
             })
 
+    def test_othello_validation_can_allow_nonterminal_prefixes(self):
+        canonical = validate_othello_moves(["d3", "c3", "b3", "b2", "b1", "a1", "c4", "c1"], require_terminal=False)
+        self.assertEqual(canonical, ["d3", "c3", "b3", "b2", "b1", "a1", "c4", "c1"])
+
     def test_poker_simulator(self):
         simulator = PokerHandSimulator()
         tokens, meta = simulator.simulate_hand()
@@ -225,9 +229,9 @@ HA H9 H5 H2
             for view_tokens, view_meta in boards:
                 validate_entry({"game": "bridge", "tokens": view_tokens, "metadata": view_meta})
                 if view_meta["view_type"] == "imperfect":
-                    self.assertEqual(sum(token.startswith("hand:") for token in view_tokens), 1)
+                    self.assertEqual(sum(token.startswith("hand:") for token in view_tokens), 13)
                 if view_meta["view_type"] == "omniscient":
-                    self.assertEqual(sum(token.startswith("hand:") for token in view_tokens), 4)
+                    self.assertEqual(sum(token.startswith("hand:") for token in view_tokens), 52)
         finally:
             os.remove(temp_path)
 
@@ -277,6 +281,29 @@ ST S6 S2 SA
             self.assertIn("play:E:Ts", tokens)
             for view_tokens, view_meta in boards:
                 validate_entry({"game": "bridge", "tokens": view_tokens, "metadata": view_meta})
+        finally:
+            os.remove(temp_path)
+
+    def test_bridge_play_leader_falls_back_to_declarer_left(self):
+        mock_pbn = """[Event "Declarer Leader"]
+[Date "2025.01.02"]
+[Dealer "N"]
+[Declarer "N"]
+[Vulnerable "None"]
+[Contract "1H"]
+[Deal "N:AKQJ.543.2.98765 T987.AKQJT9.AKQ. 6543.2.43.AKQT32 2.876.JT98765.J4"]
+[Auction "N"]
+1H Pass Pass Pass
+[Play ""]
+HA H2 H7 H3
+"""
+        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".pbn") as f:
+            f.write(mock_pbn)
+            temp_path = f.name
+        try:
+            boards = list(parse_pbn_to_tokens(temp_path))
+            self.assertEqual(len(boards), 6)
+            self.assertIn("play_leader:E", boards[0][0])
         finally:
             os.remove(temp_path)
 
@@ -515,6 +542,34 @@ ST S6 S2 SA
             os.remove(temp_path)
 
 
+    def test_phhs_parser_preserves_common_state_between_hands(self):
+        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".phhs") as f:
+            f.write("""variant = 'NT'
+starting_stacks = [10000, 10000]
+actions = [
+  'd dh p1 AhAd',
+  'd dh p2 KcKd',
+  'p1 cc',
+  'p2 cc',
+]
+actions = [
+  'd dh p1 QhQs',
+  'd dh p2 JcJd',
+  'p1 cc',
+  'p2 cc',
+]
+""")
+            temp_path = f.name
+        try:
+            hands = list(parse_phh_to_tokens(temp_path))
+            self.assertEqual(len(hands), 8)
+            self.assertIn("VARIANT:nt", hands[0][0])
+            self.assertIn("VARIANT:nt", hands[4][0])
+            self.assertIn("STARTING_STACKS:BEGIN", hands[4][0])
+        finally:
+            os.remove(temp_path)
+
+
     def test_phh_parser_ignores_brackets_inside_action_strings(self):
         with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".phh") as f:
             f.write('''actions = [
@@ -578,14 +633,16 @@ actions = [
             self.assertIn("act:hidden", complete_tokens)
             self.assertFalse(any("AhAd" in token or "KcKd" in token for token in complete_tokens))
             self.assertEqual(complete_meta["private_actions_excluded"], 2)
-            self.assertIn("private_cards:p1:AhAd", imperfect[1][0])
-            self.assertNotIn("private_cards:p2:KcKd", imperfect[1][0])
-            self.assertIn("private_cards:p2:KcKd", imperfect[2][0])
+            self.assertIn("private_card:p1:Ah", imperfect[1][0])
+            self.assertIn("private_card:p1:Ad", imperfect[1][0])
+            self.assertNotIn("private_card:p2:Kc", imperfect[1][0])
+            self.assertIn("private_card:p2:Kc", imperfect[2][0])
+            self.assertIn("private_card:p2:Kd", imperfect[2][0])
             omniscient_tokens, _ = views["omniscient"]
             self.assertIn("view_omniscient", omniscient_tokens)
-            self.assertIn("private_cards:p1:AhAd", omniscient_tokens)
-            self.assertIn("private_cards:p2:KcKd", omniscient_tokens)
-            self.assertTrue(any(token.startswith("undealt_cards:") for token in omniscient_tokens))
+            self.assertIn("private_card:p1:Ah", omniscient_tokens)
+            self.assertIn("private_card:p2:Kc", omniscient_tokens)
+            self.assertTrue(any(token.startswith("undealt_card:") for token in omniscient_tokens))
 
     def test_poker_seat_count_scales_views_and_stats(self):
         phh = """variant = 'NT'
@@ -772,6 +829,33 @@ T1
             tokens, meta = parse_csa_to_tokens(temp_path)
             self.assertIsNotNone(tokens)
             self.assertEqual(tokens[1], "<shogi>")
+        finally:
+            os.remove(temp_path)
+
+    def test_shogi_parser_rejects_nonstandard_explicit_board_rows(self):
+        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".csa") as f:
+            f.write("""V2.2
+N+Black
+N-White
+P1 * -KE-GI-KI-OU-KI-GI-KE-KY
+P2 * -HI *  *  *  *  * -KA *
+P3-FU-FU-FU-FU-FU-FU-FU-FU-FU
+P4 *  *  *  *  *  *  *  *  *
+P5 *  *  *  *  *  *  *  *  *
+P6 *  *  *  *  *  *  *  *  *
+P7+FU+FU+FU+FU+FU+FU+FU+FU+FU
+P8 * +KA *  *  *  *  * +HI *
+P9+KY+KE+GI+KI+OU+KI+GI+KE+KY
++
++7776FU
+-3334FU
+%TORYO
+""")
+            temp_path = f.name
+        try:
+            tokens, meta = parse_csa_to_tokens(temp_path)
+            self.assertIsNone(tokens)
+            self.assertIsNone(meta)
         finally:
             os.remove(temp_path)
 

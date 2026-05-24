@@ -133,7 +133,7 @@ pattern where each row is one tokenized view of one game:
 
 - `view_complete`: public/recorded hand history only. Private `d dh` hole-card deals are excluded.
 - `view_imperfect_pN`: player `pN` perspective. It adds exactly that player's private cards to the complete public stream.
-- `view_omniscient`: emitted only when every inferred active player has observed private cards in the PHH record. It contains those true private cards plus a deterministic `undealt_cards:*` set, not a sampled private-hand completion.
+- `view_omniscient`: emitted only when every inferred active player has observed private cards in the PHH record. It contains those true private cards plus deterministic `undealt_card:*` tokens, not a sampled private-hand completion.
 
 Unknown private hands are not sampled. This avoids teaching the model false
 hand/action correlations when a folded or unshown hand is absent from the source

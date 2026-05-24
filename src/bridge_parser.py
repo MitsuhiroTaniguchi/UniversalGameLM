@@ -96,6 +96,16 @@ def _section_starter(tags, name, fallback=None):
     return fallback
 
 
+def _opening_leader(tags):
+    play_starter = _section_starter(tags, "Play", None)
+    if play_starter:
+        return play_starter
+    declarer = tags.get("Declarer", "").upper()
+    if declarer in SEATS:
+        return SEATS[(SEATS.index(declarer) + 1) % 4]
+    return None
+
+
 def _parse_auction(block, tags):
     auction_lines = _find_section_lines(block, "Auction")
     if not auction_lines:
@@ -253,7 +263,7 @@ def _bridge_block_to_tokens(block, source_path):
     calls = _parse_auction(block, tags)
     _validate_auction(calls, auction_starter)
     played_cards = _parse_play(block, tags)
-    play_starter = _section_starter(tags, "Play", None)
+    play_starter = _opening_leader(tags)
     trump_suit = _contract_trump(tags, calls)
     played_by_seat = _annotated_play(played_cards, hands, play_starter, trump_suit)
     if len(calls) < 4 and not played_cards:
@@ -302,10 +312,13 @@ def _bridge_block_to_tokens(block, source_path):
     ]
     for seat in SEATS:
         entries.append((
-            ["<bos>", "<bridge>", f"view_imperfect_{seat}", f"hand:{seat}:{''.join(hands[seat])}"] + context_tokens + ["<eos>"],
+            ["<bos>", "<bridge>", f"view_imperfect_{seat}"]
+            + [f"hand:{seat}:{card}" for card in hands[seat]]
+            + context_tokens
+            + ["<eos>"],
             {**base_metadata, "view_type": "imperfect", "viewer_seat": seat},
         ))
-    omni_hands = [f"hand:{seat}:{''.join(hands[seat])}" for seat in SEATS]
+    omni_hands = [f"hand:{seat}:{card}" for seat in SEATS for card in hands[seat]]
     entries.append((
         ["<bos>", "<bridge>", "view_omniscient"] + omni_hands + context_tokens + ["<eos>"],
         {**base_metadata, "view_type": "omniscient", "viewer_seat": None},

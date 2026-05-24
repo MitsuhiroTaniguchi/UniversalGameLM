@@ -169,18 +169,20 @@ def validate_entry(entry):
         if tokens[2] == "view_complete":
             if view_type not in (None, "complete"):
                 raise ProductionDatasetError("Poker complete view metadata mismatch")
-            if any(token.startswith(("private_cards:", "deck:")) for token in tokens):
+            if any(token.startswith(("private_cards:", "private_card:", "deck:")) for token in tokens):
                 raise ProductionDatasetError("Poker complete view contains hidden-card tokens")
         elif tokens[2].startswith("view_imperfect_p"):
             viewer = tokens[2].removeprefix("view_imperfect_")
-            private_tokens = [token for token in tokens if token.startswith("private_cards:")]
-            if len(private_tokens) != 1 or not private_tokens[0].startswith(f"private_cards:{viewer}:"):
-                raise ProductionDatasetError("Poker imperfect view must contain exactly the viewer's private cards")
-            if any(token.startswith(("deck:", "undealt_cards:")) for token in tokens):
+            private_tokens = [token for token in tokens if token.startswith("private_card:")]
+            if len(private_tokens) < 2 or any(not token.startswith(f"private_card:{viewer}:") for token in private_tokens):
+                raise ProductionDatasetError("Poker imperfect view must contain only the viewer's private card tokens")
+            if any(token.startswith(("deck:", "undealt_cards:", "undealt_card:")) for token in tokens):
                 raise ProductionDatasetError("Poker imperfect view cannot contain deck tokens")
         elif tokens[2] == "view_omniscient":
-            if not any(token.startswith("undealt_cards:") for token in tokens):
-                raise ProductionDatasetError("Poker omniscient view is missing undealt-card token")
+            if not any(token.startswith("private_card:") for token in tokens):
+                raise ProductionDatasetError("Poker omniscient view is missing private-card tokens")
+            if not any(token.startswith("undealt_card:") for token in tokens):
+                raise ProductionDatasetError("Poker omniscient view is missing undealt-card tokens")
         else:
             raise ProductionDatasetError(f"Unknown poker view token: {tokens[2]}")
     if game == "bridge":
@@ -189,23 +191,24 @@ def validate_entry(entry):
         hand_tokens = [token for token in tokens if token.startswith("hand:")]
         if tokens[2] == "view_complete" and hand_tokens:
             raise ProductionDatasetError("Bridge complete view must not contain hidden hands")
-        if tokens[2].startswith("view_imperfect_") and len(hand_tokens) != 1:
-            raise ProductionDatasetError("Bridge imperfect view must contain exactly one hand")
-        if tokens[2] == "view_omniscient" and len(hand_tokens) != 4:
-            raise ProductionDatasetError("Bridge omniscient view must contain four hands")
+        if tokens[2].startswith("view_imperfect_") and len(hand_tokens) != 13:
+            raise ProductionDatasetError("Bridge imperfect view must contain exactly one 13-card hand")
+        if tokens[2] == "view_omniscient" and len(hand_tokens) != 52:
+            raise ProductionDatasetError("Bridge omniscient view must contain 52 hand-card tokens")
         if tokens[2] not in {"view_complete", "view_omniscient"} and not tokens[2].startswith("view_imperfect_"):
             raise ProductionDatasetError(f"Unknown bridge view token: {tokens[2]}")
         cards = []
         hands = {}
         for token in hand_tokens:
-            _, seat, cards_text = token.split(":", 2)
-            if len(cards_text) != 26:
-                raise ProductionDatasetError(f"Bridge hand token has wrong length: {token}")
-            hand_cards = [cards_text[i:i + 2] for i in range(0, len(cards_text), 2)]
-            hands[seat] = hand_cards
-            cards.extend(hand_cards)
+            _, seat, card = token.split(":", 2)
+            if seat not in {"N", "E", "S", "W"}:
+                raise ProductionDatasetError(f"Invalid bridge hand seat: {token}")
+            hands.setdefault(seat, []).append(card)
+            cards.append(card)
         if tokens[2] == "view_omniscient" and (len(cards) != 52 or len(set(cards)) != 52):
             raise ProductionDatasetError("Bridge entry must contain 52 unique dealt cards")
+        if any(len(hand_cards) != 13 for hand_cards in hands.values()):
+            raise ProductionDatasetError("Bridge hand-card tokens must group into 13 cards per seat")
         for card in cards:
             if not re.fullmatch(r"[AKQJT98765432][shdc]", card):
                 raise ProductionDatasetError(f"Invalid bridge card: {card}")
