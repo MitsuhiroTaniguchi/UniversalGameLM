@@ -20,7 +20,7 @@ from src.othello_parser import (
 from src.poker_parser import parse_phh_to_tokens
 from src.bridge_parser import parse_bridge_inputs
 from src.bridge_parser import _validate_auction as validate_bridge_auction
-from src.bridge_parser import _trick_winner as bridge_trick_winner
+from src.bridge_parser import expected_play_seats as bridge_expected_play_seats
 from src.bridge_parser import _validate_play as validate_bridge_play
 from src.hf_uploader import HuggingFaceShardUploader
 from src.mahjonglm_compat import entry_to_mahjonglm_row, entry_to_mahjonglm_row_tokens
@@ -253,20 +253,12 @@ def validate_entry(entry):
             raise ProductionDatasetError(f"Invalid bridge token: {token}")
         try:
             validate_bridge_auction(calls, dealer)
-            if played_cards and tokens[2] != "view_omniscient" and not (entry.get("metadata") or {}).get("bridge_play_validated"):
-                raise ProductionDatasetError("Bridge play tokens without hidden hands must come from a validated parser")
+            if played_cards and play_leader:
+                expected_seats = bridge_expected_play_seats(played_cards, play_leader, trump_suit)
+                if played_seats != expected_seats:
+                    raise ProductionDatasetError("Bridge play seat annotations do not match trick order")
             if tokens[2] == "view_omniscient" and played_cards:
                 validate_bridge_play(played_cards, hands, play_leader, trump_suit)
-                if play_leader:
-                    expected_seats = []
-                    leader = play_leader
-                    for trick_start in range(0, len(played_cards), 4):
-                        trick_cards = played_cards[trick_start:trick_start + 4]
-                        expected_seats.extend(["N", "E", "S", "W"][("NESW".index(leader) + offset) % 4] for offset in range(4))
-                        led_suit = trick_cards[0][1]
-                        leader = bridge_trick_winner(list(zip(expected_seats[-4:], trick_cards)), led_suit, trump_suit)
-                    if played_seats != expected_seats:
-                        raise ProductionDatasetError("Bridge play seat annotations do not match trick order")
         except Exception as exc:
             raise ProductionDatasetError(f"Invalid bridge sequence: {exc}") from exc
 

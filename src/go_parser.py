@@ -2,6 +2,7 @@ import os
 import gzip
 from pathlib import Path
 import sgfmill.sgf
+import sgfmill.sgf_grammar
 import sgfmill.boards
 
 def get_sgf_property(node, name, default="Unknown"):
@@ -59,6 +60,13 @@ def validate_go_token_sequence(tokens):
         raise ValueError(f"Invalid Go token: {token}")
     return True
 
+
+def _coarse_tree_has_variations(tree):
+    children = getattr(tree, "children", [])
+    if len(children) > 1:
+        return True
+    return any(_coarse_tree_has_variations(child) for child in children)
+
 def parse_sgf_to_tokens(sgf_path):
     """
     Parses a Go SGF file using sgfmill and returns the token sequence and metadata.
@@ -73,10 +81,12 @@ def parse_sgf_to_tokens(sgf_path):
         with opener(sgf_path, "rt", encoding="utf-8", errors="ignore") as f:
             sgf_content = f.read()
 
+        coarse_tree = sgfmill.sgf_grammar.parse_sgf_game(sgf_content.encode("utf-8", errors="ignore"))
+        if _coarse_tree_has_variations(coarse_tree):
+            raise ValueError("SGF variations are not accepted in production tokenization")
+
         game = sgfmill.sgf.Sgf_game.from_string(sgf_content)
         root = game.get_root()
-        if any(len(getattr(node, "_children", [])) > 1 for node in game.get_main_sequence()):
-            raise ValueError("SGF variations are not accepted in production tokenization")
 
         board_size = root.get_size()
         if board_size < 1 or board_size > 26:

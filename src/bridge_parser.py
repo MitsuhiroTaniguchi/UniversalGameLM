@@ -215,8 +215,6 @@ def _validate_play(played_cards, hands, leader, trump_suit=None):
         return True
     if leader not in SEATS:
         raise ValueError("Bridge play requires a valid opening leader")
-    if len(played_cards) % 4 != 0:
-        raise ValueError("Bridge play must contain complete tricks")
     remaining = {seat: set(cards) for seat, cards in hands.items()}
     current_leader = leader
     for trick_start in range(0, len(played_cards), 4):
@@ -231,26 +229,31 @@ def _validate_play(played_cards, hands, leader, trump_suit=None):
                 raise ValueError(f"{seat} revoked on {card}")
             remaining[seat].remove(card)
             trick.append((seat, card))
-        current_leader = _trick_winner(trick, led_suit, trump_suit)
+        if len(trick_cards) == 4:
+            current_leader = _trick_winner(trick, led_suit, trump_suit)
     return True
+
+
+def expected_play_seats(played_cards, leader, trump_suit=None):
+    if not played_cards:
+        return []
+    if leader not in SEATS:
+        raise ValueError("Bridge play requires a valid opening leader")
+    expected = []
+    current_leader = leader
+    for trick_start in range(0, len(played_cards), 4):
+        trick_cards = played_cards[trick_start:trick_start + 4]
+        trick_seats = [SEATS[(SEATS.index(current_leader) + offset) % 4] for offset in range(len(trick_cards))]
+        expected.extend(trick_seats)
+        if len(trick_cards) == 4:
+            led_suit = trick_cards[0][1]
+            current_leader = _trick_winner(list(zip(trick_seats, trick_cards)), led_suit, trump_suit)
+    return expected
 
 
 def _annotated_play(played_cards, hands, leader, trump_suit=None):
     _validate_play(played_cards, hands, leader, trump_suit)
-    annotated = []
-    if not played_cards:
-        return annotated
-    current_leader = leader
-    for trick_start in range(0, len(played_cards), 4):
-        trick_cards = played_cards[trick_start:trick_start + 4]
-        led_suit = trick_cards[0][1]
-        trick = []
-        for offset, card in enumerate(trick_cards):
-            seat = SEATS[(SEATS.index(current_leader) + offset) % 4]
-            annotated.append((seat, card))
-            trick.append((seat, card))
-        current_leader = _trick_winner(trick, led_suit, trump_suit)
-    return annotated
+    return list(zip(expected_play_seats(played_cards, leader, trump_suit), played_cards))
 
 
 def _bridge_block_to_tokens(block, source_path):

@@ -291,7 +291,6 @@ def _is_public_phh_action(action):
         r"^dh\b",
         r"^d dh\b",
         r"^d\.dh\b",
-        r"^show_or_muck_hole_cards\b",
     )
     return not any(re.match(pattern, compact) for pattern in private_patterns)
 
@@ -398,6 +397,17 @@ def _private_hole_from_action(action):
     return seat, cards[:2]
 
 
+def _shown_hole_from_action(action):
+    compact = re.sub(r"\s+", " ", action.strip().lower())
+    if not re.match(r"^(?:p\d+ sm|show_or_muck_hole_cards p\d+)\b", compact) or "-" in compact:
+        return None
+    seat = _seat_from_action(action)
+    cards = _extract_cards(action)
+    if seat is None or len(cards) < 2:
+        return None
+    return seat, cards[:2]
+
+
 def _players_from_state_and_actions(state_tokens, actions, private_holes):
     seats = set(private_holes)
     for action in actions:
@@ -418,25 +428,78 @@ def _public_action_tokens(action):
     if re.match(r"^p\d+_sm_-?$", sanitized):
         sanitized = sanitized.replace("_-", "_hidden")
     parts = [part for part in sanitized.split("_") if part]
+    aliases = {
+        "d": "deal",
+        "db": "board",
+        "cc": "call",
+        "cbr": "raise",
+        "br": "raise",
+        "f": "fold",
+        "sm": "show",
+        "calls": "call",
+        "checks": "check",
+        "folds": "fold",
+        "bets": "bet",
+        "raises": "raise",
+        "posts": "post",
+        "shows": "show",
+        "mucks": "muck",
+    }
+    parts = [aliases.get(part, part) for part in parts]
+
+    seat = next((part for part in parts if re.fullmatch(r"p\d+", part)), None)
+    amount_tokens = []
+    card_tokens = []
+    for part in parts:
+        if re.fullmatch(r"\d+(?:\.\d+)?", part):
+            amount_tokens.extend(_number_digit_tokens("AMT", part))
+        elif CARD_RE.fullmatch(part):
+            card_tokens.append(f"card:{_normalize_card(part)}")
+        elif CARD_RE.findall(part) and "".join(CARD_RE.findall(part)).lower() == part.lower():
+            card_tokens.extend(f"card:{card}" for card in _extract_cards(part))
+
+    action_token = None
+    if "deal" in parts and "board" in parts:
+        action_token = "act:deal_board"
+    elif {"show", "or", "muck", "hole", "cards"}.issubset(parts):
+        action_token = "act:show"
+    elif "post_blind" in parts or ("post" in parts and "blind" in parts and "small" not in parts and "big" not in parts):
+        action_token = "act:post_blind"
+    elif "post_ante" in parts:
+        action_token = "act:post_ante"
+    elif "post" in parts and "small" in parts and "blind" in parts:
+        action_token = "act:post_small_blind"
+    elif "post" in parts and "big" in parts and "blind" in parts:
+        action_token = "act:post_big_blind"
+    elif "post" in parts and "ante" in parts:
+        action_token = "act:post_ante"
+    elif "flop" in parts:
+        action_token = "act:flop"
+    elif "turn" in parts:
+        action_token = "act:turn"
+    elif "river" in parts:
+        action_token = "act:river"
+    else:
+        for part in parts:
+            if part in {"call", "check", "fold", "raise", "bet", "show", "muck", "blind", "ante", "board"}:
+                action_token = f"act:{part}"
+                break
+
+    if action_token:
+        tokens = []
+        if seat:
+            tokens.append(f"seat:{seat}")
+        tokens.append(action_token)
+        if "hidden" in parts:
+            tokens.append("act:hidden")
+        tokens.extend(amount_tokens)
+        tokens.extend(card_tokens)
+        return tokens
+
     tokens = []
     index = 0
     while index < len(parts):
         part = parts[index]
-        part = {
-            "cc": "call",
-            "cbr": "raise",
-            "br": "raise",
-            "f": "fold",
-            "sm": "show",
-            "calls": "call",
-            "checks": "check",
-            "folds": "fold",
-            "bets": "bet",
-            "raises": "raise",
-            "posts": "post",
-            "shows": "show",
-            "mucks": "muck",
-        }.get(part, part)
         if re.fullmatch(r"p\d+", part):
             tokens.append(f"seat:{part}")
         elif re.fullmatch(r"\d+(?:\.\d+)?", part):
@@ -465,6 +528,7 @@ def _is_supported_public_action(action):
         r"p\d+ (?:cc|cbr|br|f|folds?|checks?|calls?|raises?|bets?|posts?|sm|shows?|mucks?)\b|"
         r"(?:calls?|checks?|folds?|bets?|raises?) p\d+\b|"
         r"p\d+ posts? (?:small blind|big blind|ante)\b|"
+        r"show_or_muck_hole_cards p\d+\b|"
         r"(?:p\d+_)?(?:post_blind|post_ante|ante|blind|posts?)\b|"
         r"(?:d db|db|deal_board|board)\b|"
         r"(?:flop|turn|river)\b"
@@ -478,8 +542,6 @@ def _observed_cards_from_public_actions(actions):
     for action in actions:
         compact = re.sub(r"\s+", " ", action.strip().lower())
         if re.match(r"^(?:d db|db|deal_board|board)\b", compact):
-            observed.extend(_extract_cards(action))
-        elif re.match(r"^p\d+ sm\b", compact) and "-" not in compact:
             observed.extend(_extract_cards(action))
     return observed
 
@@ -547,6 +609,13 @@ def poker_view_entries(actions, state_tokens):
             private_holes[seat] = cards
             private_excluded += 1
             continue
+        shown = _shown_hole_from_action(action)
+        if shown is not None:
+            seat, cards = shown
+            if seat in private_holes and private_holes[seat] != cards:
+                raise ValueError(f"Shown cards contradict private deal for seat p{seat}")
+            if seat not in private_holes:
+                private_holes[seat] = cards
         if not _is_public_phh_action(action):
             private_excluded += 1
             continue

@@ -523,9 +523,9 @@ HA H2 H7 H3
             self.assertNotIn("deal_hole_p1_ahad", tokens)
             self.assertEqual(tokens[2:], [
                 "view_complete",
-                "act:post_blind", "seat:p1", "AMT:5", "AMT:0",
-                "act:post_blind", "seat:p2", "AMT:1", "AMT:0", "AMT:0",
-                "act:call", "seat:p1",
+                "seat:p1", "act:post_blind", "AMT:5", "AMT:0",
+                "seat:p2", "act:post_blind", "AMT:1", "AMT:0", "AMT:0",
+                "seat:p1", "act:call",
                 "<eos>",
             ])
             self.assertEqual(meta["view_type"], "complete")
@@ -654,6 +654,10 @@ actions = [
             self.assertNotIn("act:cc", complete_tokens)
             self.assertNotIn("act:cbr", complete_tokens)
             self.assertIn("AMT:3", complete_tokens)
+            self.assertIn("act:deal_board", complete_tokens)
+            self.assertIn("card:2c", complete_tokens)
+            self.assertIn("card:3d", complete_tokens)
+            self.assertIn("card:4h", complete_tokens)
             self.assertIn("act:hidden", complete_tokens)
             self.assertFalse(any("AhAd" in token or "KcKd" in token for token in complete_tokens))
             self.assertEqual(complete_meta["private_actions_excluded"], 2)
@@ -667,6 +671,28 @@ actions = [
             self.assertIn("private_card:p1:Ah", omniscient_tokens)
             self.assertIn("private_card:p2:Kc", omniscient_tokens)
             self.assertTrue(any(token.startswith("undealt_card:") for token in omniscient_tokens))
+
+    def test_phh_parser_normalizes_long_show_or_muck_actions(self):
+        phh = """variant = 'NT'
+actions = [
+  'd dh p1 AhAd',
+  'd dh p2 KcKd',
+  'p1 cc',
+  'show_or_muck_hole_cards p1 AhAd',
+]
+"""
+        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".phh") as f:
+            f.write(phh)
+            temp_path = f.name
+        try:
+            hands = list(parse_phh_to_tokens(temp_path))
+            complete_tokens = hands[0][0]
+            self.assertIn("seat:p1", complete_tokens)
+            self.assertIn("act:show", complete_tokens)
+            self.assertIn("card:Ah", complete_tokens)
+            self.assertIn("card:Ad", complete_tokens)
+        finally:
+            os.remove(temp_path)
 
     def test_poker_seat_count_scales_views_and_stats(self):
         phh = """variant = 'NT'
@@ -709,6 +735,9 @@ actions = [
         self.assertFalse(is_counted_move_token("SZ:19"))
         self.assertFalse(is_counted_move_token("KM:6.5"))
         self.assertFalse(is_counted_move_token("dealer:N"))
+        self.assertFalse(is_counted_move_token("AMT:5"))
+        self.assertFalse(is_counted_move_token("ANTE_TRIMMING_STATUS:false"))
+        self.assertFalse(is_counted_move_token("BETTING_TYPE:no_limit"))
         self.assertTrue(is_counted_move_token("7g7f"))
         self.assertTrue(is_counted_move_token("act:raise"))
 
@@ -729,6 +758,34 @@ actions = [
             self.assertEqual(len(boards), 6)
             for tokens, meta in boards:
                 validate_entry({"game": "bridge", "tokens": tokens, "metadata": meta})
+        finally:
+            os.remove(temp_path)
+
+    def test_bridge_allows_valid_incomplete_play_and_validates_seat_order(self):
+        mock_pbn = """[Event "Incomplete"]
+[Date "2025.01.02"]
+[Dealer "N"]
+[Vulnerable "None"]
+[Deal "N:AKQJ.543.2.98765 T987.2.AKQJ.T432 6543.AKQJ.43.AKQ 2.T9876.T98765.J"]
+[Auction "N"]
+1NT Pass 3NT Pass Pass Pass
+[Play "S"]
+HA
+"""
+        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".pbn") as f:
+            f.write(mock_pbn)
+            temp_path = f.name
+        try:
+            boards = list(parse_pbn_to_tokens(temp_path))
+            self.assertEqual(len(boards), 6)
+            for tokens, meta in boards:
+                validate_entry({"game": "bridge", "tokens": tokens, "metadata": meta})
+
+            bad_tokens = list(boards[0][0])
+            play_index = bad_tokens.index("play:S:Ah")
+            bad_tokens[play_index] = "play:N:Ah"
+            with self.assertRaises(ProductionDatasetError):
+                validate_entry({"game": "bridge", "tokens": bad_tokens, "metadata": boards[0][1]})
         finally:
             os.remove(temp_path)
 
