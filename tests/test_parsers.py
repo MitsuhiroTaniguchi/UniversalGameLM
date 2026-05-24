@@ -253,6 +253,34 @@ HA H9 H5 H2
         finally:
             os.remove(temp_path)
 
+    def test_bridge_trump_ruff_sets_next_leader(self):
+        mock_pbn = """[Event "Trump Test"]
+[Date "2025.01.02"]
+[Dealer "N"]
+[Vulnerable "None"]
+[Contract "1H"]
+[Deal "N:AKQJ.543.2.98765 T987.AKQJT9.AKQ. 6543.2.43.AKQT32 2.876.JT98765.J4"]
+[Auction "N"]
+1H Pass Pass Pass
+[Play "N"]
+C9 HA CA CJ
+ST S6 S2 SA
+"""
+        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".pbn") as f:
+            f.write(mock_pbn)
+            temp_path = f.name
+        try:
+            boards = list(parse_pbn_to_tokens(temp_path))
+            self.assertEqual(len(boards), 6)
+            tokens, meta = boards[0]
+            self.assertIn("trump:h", tokens)
+            self.assertIn("play:E:Ts", tokens)
+            for view_tokens, view_meta in boards:
+                validate_entry({"game": "bridge", "tokens": view_tokens, "metadata": view_meta})
+        finally:
+            os.remove(temp_path)
+
+
     def test_tokenizer_encoding(self):
         special_tokens = ["<pad>", "<unk>", "<bos>", "<eos>", "<chess>", "<shogi>", "<go>", "<othello>", "<poker>"]
         tokenizer = UniversalGameTokenizer(special_tokens=special_tokens)
@@ -458,6 +486,34 @@ HA H9 H5 H2
             self.assertEqual(meta["private_actions_excluded"], 1)
         finally:
             os.remove(temp_path)
+
+    def test_phh_parser_accepts_third_person_action_verbs(self):
+        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".phh") as f:
+            f.write('''actions = [
+  "deal_hole P1 AhAd",
+  "deal_hole P2 KcKd",
+  "p1 posts small blind 50",
+  "p2 posts big blind 100",
+  "p1 calls",
+  "p2 checks",
+  "p1 bets 200",
+  "p2 folds"
+]
+''')
+            temp_path = f.name
+        try:
+            hands = list(parse_phh_to_tokens(temp_path))
+            self.assertEqual(len(hands), 4)
+            complete_tokens = hands[0][0]
+            self.assertIn("act:post_small_blind", complete_tokens)
+            self.assertIn("act:post_big_blind", complete_tokens)
+            self.assertIn("act:call", complete_tokens)
+            self.assertIn("act:check", complete_tokens)
+            self.assertIn("act:bet", complete_tokens)
+            self.assertIn("act:fold", complete_tokens)
+        finally:
+            os.remove(temp_path)
+
 
     def test_phh_parser_ignores_brackets_inside_action_strings(self):
         with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".phh") as f:
@@ -673,6 +729,52 @@ PI
             self.assertIsNone(meta)
         finally:
             os.remove(temp_path)
+
+    def test_shogi_parser_accepts_explicit_standard_board_rows(self):
+        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".csa") as f:
+            f.write("""V2.2
+N+Black
+N-White
+P1-KY-KE-GI-KI-OU-KI-GI-KE-KY
+P2 * -HI *  *  *  *  * -KA *
+P3-FU-FU-FU-FU-FU-FU-FU-FU-FU
+P4 *  *  *  *  *  *  *  *  *
+P5 *  *  *  *  *  *  *  *  *
+P6 *  *  *  *  *  *  *  *  *
+P7+FU+FU+FU+FU+FU+FU+FU+FU+FU
+P8 * +KA *  *  *  *  * +HI *
+P9+KY+KE+GI+KI+OU+KI+GI+KE+KY
++
++7776FU
+T1
+-3334FU
+T1
++2726FU
+T1
+-8384FU
+T1
++2625FU
+T1
+-8485FU
+T1
++6978KI
+T1
+-4132KI
+T1
++2524FU
+T1
+-2324FU
+T1
+%TORYO
+""")
+            temp_path = f.name
+        try:
+            tokens, meta = parse_csa_to_tokens(temp_path)
+            self.assertIsNotNone(tokens)
+            self.assertEqual(tokens[1], "<shogi>")
+        finally:
+            os.remove(temp_path)
+
 
     def test_shogi_directory_expands_nested_7z_archives(self):
         try:

@@ -414,12 +414,25 @@ def _public_action_tokens(action):
     index = 0
     while index < len(parts):
         part = parts[index]
+        part = {
+            "calls": "call",
+            "checks": "check",
+            "folds": "fold",
+            "bets": "bet",
+            "raises": "raise",
+            "posts": "post",
+            "shows": "show",
+            "mucks": "muck",
+        }.get(part, part)
         if re.fullmatch(r"p\d+", part):
             tokens.append(f"seat:{part}")
         elif re.fullmatch(r"\d+(?:\.\d+)?", part):
             tokens.extend(_number_digit_tokens("AMT", part))
         elif CARD_RE.fullmatch(part):
             tokens.append(f"card:{_normalize_card(part)}")
+        elif part == "post" and index + 2 < len(parts) and parts[index + 1] in {"small", "big"} and parts[index + 2] == "blind":
+            tokens.append(f"act:post_{parts[index + 1]}_blind")
+            index += 2
         elif part in {"post", "blind", "ante"} and index + 1 < len(parts):
             tokens.append(f"act:{part}_{parts[index + 1]}")
             index += 1
@@ -436,9 +449,10 @@ def _is_supported_public_action(action):
     compact = re.sub(r"\s+", " ", action.strip().lower())
     return bool(re.match(
         r"^(?:"
-        r"p\d+ (?:cc|cbr|br|f|fold|check|call|raise|bet|sm|show|muck)\b|"
-        r"(?:call|check|fold|bet|raise) p\d+\b|"
-        r"(?:p\d+_)?(?:post_blind|post_ante|ante|blind)\b|"
+        r"p\d+ (?:cc|cbr|br|f|folds?|checks?|calls?|raises?|bets?|posts?|sm|shows?|mucks?)\b|"
+        r"(?:calls?|checks?|folds?|bets?|raises?) p\d+\b|"
+        r"p\d+ posts? (?:small blind|big blind|ante)\b|"
+        r"(?:p\d+_)?(?:post_blind|post_ante|ante|blind|posts?)\b|"
         r"(?:d db|db|deal_board|board)\b|"
         r"(?:flop|turn|river)\b"
         r")",

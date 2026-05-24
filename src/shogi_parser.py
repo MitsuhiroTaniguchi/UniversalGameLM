@@ -1,5 +1,6 @@
 import os
 import lzma
+import re
 import tempfile
 from pathlib import Path
 import cshogi
@@ -45,13 +46,31 @@ def _setup_tokens(csa_text):
             side_to_move = "black" if line == "+" else "white"
         if line.startswith("PI"):
             continue
-        if line.startswith("P"):
+        if line.startswith("P") and not re.match(r"^P[1-9]", line):
             explicit_position = True
     if explicit_position:
         raise ValueError("Explicit CSA setup is not serialized; reject non-PI starts")
     if side_to_move:
         tokens.append(f"TURN:{side_to_move}")
     return tokens
+
+
+def _collapse_explicit_standard_board(csa_text):
+    lines = csa_text.splitlines()
+    board_lines = [line for line in lines if re.match(r"^P[1-9]", line.strip())]
+    if not board_lines:
+        return csa_text
+    collapsed = []
+    inserted = False
+    for line in lines:
+        stripped = line.strip()
+        if re.match(r"^P[1-9]", stripped):
+            if not inserted:
+                collapsed.append("PI")
+                inserted = True
+            continue
+        collapsed.append(line)
+    return "\n".join(collapsed) + ("\n" if csa_text.endswith("\n") else "")
 
 
 def _date_from_csa(csa_text):
@@ -78,7 +97,7 @@ def parse_csa_to_tokens(csa_path):
             return None, None
 
         parser = cshogi.Parser()
-        parser.parse_csa_str(csa_text)
+        parser.parse_csa_str(_collapse_explicit_standard_board(csa_text))
         
         # Convert move integers to USI strings
         usi_moves = [cshogi.move_to_usi(m) for m in parser.moves]

@@ -20,6 +20,7 @@ from src.othello_parser import (
 from src.poker_parser import parse_phh_to_tokens
 from src.bridge_parser import parse_bridge_inputs
 from src.bridge_parser import _validate_auction as validate_bridge_auction
+from src.bridge_parser import _trick_winner as bridge_trick_winner
 from src.bridge_parser import _validate_play as validate_bridge_play
 from src.hf_uploader import HuggingFaceShardUploader
 from src.mahjonglm_compat import entry_to_mahjonglm_row, entry_to_mahjonglm_row_tokens
@@ -101,6 +102,13 @@ def iter_game_entries(game, input_paths, max_records=None):
             }
             if max_records and emitted >= max_records and game not in {"poker", "bridge"}:
                 return
+
+
+def iter_cached_entries(cache_path):
+    with open(cache_path, "r", encoding="utf-8") as f:
+        for line in f:
+            if line.strip():
+                yield json.loads(line)
 
 
 def validate_entry(entry):
@@ -203,6 +211,7 @@ def validate_entry(entry):
                 raise ProductionDatasetError(f"Invalid bridge card: {card}")
         dealer = None
         play_leader = None
+        trump_suit = None
         calls = []
         played_cards = []
         played_seats = []
@@ -212,6 +221,11 @@ def validate_entry(entry):
                 continue
             if token.startswith("play_leader:"):
                 play_leader = token.split(":", 1)[1]
+                continue
+            if token.startswith("trump:"):
+                trump_suit = token.split(":", 1)[1]
+                if trump_suit not in {"c", "d", "h", "s"}:
+                    raise ProductionDatasetError(f"Invalid bridge trump token: {token}")
                 continue
             if token.startswith(("vul:", "contract:", "declarer:", "hand:")):
                 continue
@@ -239,7 +253,7 @@ def validate_entry(entry):
             if played_cards and tokens[2] != "view_omniscient" and not (entry.get("metadata") or {}).get("bridge_play_validated"):
                 raise ProductionDatasetError("Bridge play tokens without hidden hands must come from a validated parser")
             if tokens[2] == "view_omniscient" and played_cards:
-                validate_bridge_play(played_cards, hands, play_leader)
+                validate_bridge_play(played_cards, hands, play_leader, trump_suit)
                 if play_leader:
                     expected_seats = []
                     leader = play_leader
@@ -247,10 +261,7 @@ def validate_entry(entry):
                         trick_cards = played_cards[trick_start:trick_start + 4]
                         expected_seats.extend(["N", "E", "S", "W"][("NESW".index(leader) + offset) % 4] for offset in range(4))
                         led_suit = trick_cards[0][1]
-                        leader = min(
-                            zip(expected_seats[-4:], trick_cards),
-                            key=lambda item: "AKQJT98765432".index(item[1][0]) if item[1][1] == led_suit else 99,
-                        )[0]
+                        leader = bridge_trick_winner(list(zip(expected_seats[-4:], trick_cards)), led_suit, trump_suit)
                     if played_seats != expected_seats:
                         raise ProductionDatasetError("Bridge play seat annotations do not match trick order")
         except Exception as exc:
@@ -358,6 +369,7 @@ def build_game_shards(
     repo_prefix="",
     output_format="universal_jsonl",
     tokenizer=None,
+    cached_entries_path=None,
 ):
     if output_format not in {"universal_jsonl", "mahjonglm_jsonl"}:
         raise ValueError(f"Unsupported output_format: {output_format}")
@@ -380,7 +392,8 @@ def build_game_shards(
     uploaded = []
 
     try:
-        for entry in iter_game_entries(game, input_paths, max_records=max_records):
+        entry_iter = iter_cached_entries(cached_entries_path) if cached_entries_path else iter_game_entries(game, input_paths, max_records=max_records)
+        for entry in entry_iter:
             metadata = entry.get("metadata") or {}
             starts_new_view_group = game not in {"poker", "bridge"} or metadata.get("view_type") == "complete"
             if total_tokens >= target_tokens and starts_new_view_group:

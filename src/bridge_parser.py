@@ -181,7 +181,26 @@ def _parse_play(block, tags):
     return cards
 
 
-def _validate_play(played_cards, hands, leader):
+def _contract_trump(tags, calls):
+    contract = (tags.get("Contract") or "").upper().replace("NT", "N")
+    match = re.search(r"[1-7]([CDHSN])", contract)
+    if match:
+        strain = match.group(1)
+        return None if strain == "N" else strain.lower()
+    for call in reversed(calls):
+        if re.fullmatch(r"[1-7][CDHSN]", call):
+            return None if call[1] == "N" else call[1].lower()
+    return None
+
+
+def _trick_winner(trick, led_suit, trump_suit=None):
+    candidates = [item for item in trick if trump_suit and item[1][1] == trump_suit]
+    if not candidates:
+        candidates = [item for item in trick if item[1][1] == led_suit]
+    return min(candidates, key=lambda item: RANKS.index(item[1][0]))[0]
+
+
+def _validate_play(played_cards, hands, leader, trump_suit=None):
     if not played_cards:
         return True
     if leader not in SEATS:
@@ -202,15 +221,12 @@ def _validate_play(played_cards, hands, leader):
                 raise ValueError(f"{seat} revoked on {card}")
             remaining[seat].remove(card)
             trick.append((seat, card))
-        current_leader = min(
-            (item for item in trick if item[1][1] == led_suit),
-            key=lambda item: RANKS.index(item[1][0]),
-        )[0]
+        current_leader = _trick_winner(trick, led_suit, trump_suit)
     return True
 
 
-def _annotated_play(played_cards, hands, leader):
-    _validate_play(played_cards, hands, leader)
+def _annotated_play(played_cards, hands, leader, trump_suit=None):
+    _validate_play(played_cards, hands, leader, trump_suit)
     annotated = []
     if not played_cards:
         return annotated
@@ -223,10 +239,7 @@ def _annotated_play(played_cards, hands, leader):
             seat = SEATS[(SEATS.index(current_leader) + offset) % 4]
             annotated.append((seat, card))
             trick.append((seat, card))
-        current_leader = min(
-            (item for item in trick if item[1][1] == led_suit),
-            key=lambda item: RANKS.index(item[1][0]),
-        )[0]
+        current_leader = _trick_winner(trick, led_suit, trump_suit)
     return annotated
 
 
@@ -241,7 +254,8 @@ def _bridge_block_to_tokens(block, source_path):
     _validate_auction(calls, auction_starter)
     played_cards = _parse_play(block, tags)
     play_starter = _section_starter(tags, "Play", None)
-    played_by_seat = _annotated_play(played_cards, hands, play_starter)
+    trump_suit = _contract_trump(tags, calls)
+    played_by_seat = _annotated_play(played_cards, hands, play_starter, trump_suit)
     if len(calls) < 4 and not played_cards:
         return None
 
@@ -255,6 +269,8 @@ def _bridge_block_to_tokens(block, source_path):
     contract = tags.get("Contract")
     if contract:
         context_tokens.append(f"contract:{contract.upper().replace(' ', '_')}")
+    if trump_suit:
+        context_tokens.append(f"trump:{trump_suit}")
     declarer = tags.get("Declarer")
     if declarer:
         context_tokens.append(f"declarer:{declarer.upper()}")

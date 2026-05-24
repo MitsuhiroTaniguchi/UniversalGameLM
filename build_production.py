@@ -3,6 +3,7 @@ import contextlib
 import json
 import os
 import sys
+import tempfile
 
 from src.production_pipeline import (
     DEFAULT_TARGET_TOKENS,
@@ -52,34 +53,60 @@ def main():
         )
 
     tokenizer = None
+    cached_entries_path = None
     if args.output_format == "mahjonglm_jsonl":
         if not args.mahjonglm_tokenizer_dir:
             raise RuntimeError("--mahjonglm-tokenizer-dir is required for mahjonglm_jsonl output")
         tokenizer = UniversalGameTokenizer.from_mahjonglm_assets(args.mahjonglm_tokenizer_dir)
         from src.mahjonglm_compat import collect_tokens_for_mahjonglm
+        from src.mahjonglm_compat import entry_to_mahjonglm_row_tokens
         from src.production_pipeline import iter_game_entries
 
+        cache_file = tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            prefix=f"ugl-{args.game}-entries-",
+            suffix=".jsonl",
+            delete=False,
+        )
+        cached_entries_path = cache_file.name
+        cached_tokens = 0
         with contextlib.redirect_stdout(sys.stderr):
             for entry in iter_game_entries(args.game, args.input, max_records=args.max_records):
+                metadata = entry.get("metadata") or {}
+                starts_new_view_group = args.game not in {"poker", "bridge"} or metadata.get("view_type") == "complete"
+                if cached_tokens >= args.target_tokens and starts_new_view_group:
+                    break
                 tokenizer.add_tokens(collect_tokens_for_mahjonglm([entry]))
+                cache_file.write(json.dumps(entry, ensure_ascii=False) + "\n")
+                cached_tokens += len(entry_to_mahjonglm_row_tokens(entry))
+        cache_file.close()
         if args.tokenizer_output_dir:
             tokenizer.save_mahjonglm_assets(args.tokenizer_output_dir)
 
-    uploader = maybe_hf_uploader(args.hf_repo_id)
-    with contextlib.redirect_stdout(sys.stderr):
-        result = build_game_shards(
-            args.game,
-            args.input,
-            args.output_dir,
-            target_tokens=args.target_tokens,
-            max_tokens_per_shard=args.max_tokens_per_shard,
-            max_records=args.max_records,
-            uploader=uploader,
-            delete_after_upload=args.delete_after_upload,
-            repo_prefix=args.hf_repo_prefix or args.game,
-            output_format=args.output_format,
-            tokenizer=tokenizer,
-        )
+    try:
+        uploader = maybe_hf_uploader(args.hf_repo_id)
+        with contextlib.redirect_stdout(sys.stderr):
+            result = build_game_shards(
+                args.game,
+                args.input,
+                args.output_dir,
+                target_tokens=args.target_tokens,
+                max_tokens_per_shard=args.max_tokens_per_shard,
+                max_records=args.max_records,
+                uploader=uploader,
+                delete_after_upload=args.delete_after_upload,
+                repo_prefix=args.hf_repo_prefix or args.game,
+                output_format=args.output_format,
+                tokenizer=tokenizer,
+                cached_entries_path=cached_entries_path,
+            )
+    finally:
+        if cached_entries_path:
+            try:
+                os.remove(cached_entries_path)
+            except OSError:
+                pass
     print(json.dumps(result, indent=2, ensure_ascii=False))
     if result["status"] != "ready":
         raise SystemExit(2)
