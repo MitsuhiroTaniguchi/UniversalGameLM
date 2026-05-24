@@ -1,97 +1,193 @@
 {
   "target_tokens_per_game": 3000000000,
+  "quality_policy": {
+    "default_required_tiers": ["engine_top", "human_top"],
+    "allow_public_only_as": ["evaluation", "coverage_audit", "fallback_with_explicit_filter"],
+    "notes": "Primary 3B-token production builds should use top-engine self-play or elite human tournament/player subsets. General public archives are not primary training sources unless a strict top-player/top-engine filter is documented in the source entry."
+  },
   "games": {
     "chess": [
       {
-        "name": "Lichess standard rated games",
+        "name": "Leela Chess Zero self-play training PGNs",
+        "source_class": "engine_top",
+        "quality_tier": "primary_3b",
+        "license": "verify Lc0 data license and attribution before redistribution",
+        "url": "https://storage.lczero.org/files/training_pgns/",
+        "format": "pgn",
+        "priority": 1,
+        "notes": "Superhuman engine self-play. Use as the main volume source for 3B-token chess builds; keep network/run metadata in shard manifests."
+      },
+      {
+        "name": "Lichess Elite Database",
+        "source_class": "human_top",
+        "quality_tier": "primary_or_mix",
+        "license": "verify database.nikonoel.fr redistribution terms",
+        "url": "https://database.nikonoel.fr/",
+        "format": "pgn",
+        "priority": 2,
+        "notes": "Filtered Lichess standard games by strong-player rating thresholds with bullet excluded. Prefer over raw Lichess for human-style top play."
+      },
+      {
+        "name": "Raw Lichess standard rated games",
         "source_class": "human_public",
+        "quality_tier": "excluded_from_primary",
         "license": "database.lichess.org terms / CC0-style public database notice",
         "url": "https://database.lichess.org/",
         "format": "pgn.zst",
-        "priority": 1,
-        "notes": "Use standard rated games; filter by rating/time control if a stricter top-play subset is required."
+        "priority": 99,
+        "notes": "Do not use unfiltered for primary training. Only use with explicit rating/time-control/cheat-filter gates or for robustness/evaluation studies."
       }
     ],
     "shogi": [
       {
         "name": "AobaZero self-play CSA archives",
         "source_class": "engine_top",
+        "quality_tier": "primary_3b",
         "license": "verify upstream redistribution terms before mirroring raw records",
         "url": "https://github.com/kobanium/aobazero",
         "format": "csa.xz",
         "priority": 1,
-        "notes": "Primary move-only source. Public reports cite tens of millions of CSA records."
+        "notes": "Primary move-only source. AlphaZero-style engine self-play; preserve network/run provenance and checksums."
+      },
+      {
+        "name": "dlshogi / DeepLearningShogi generated training records",
+        "source_class": "engine_top",
+        "quality_tier": "candidate_primary",
+        "license": "verify each released archive or developer-provided link before redistribution",
+        "url": "https://github.com/TadaoYamaoka/DeepLearningShogi",
+        "format": "hcpe/hcpe3/csa",
+        "priority": 2,
+        "notes": "High-quality candidate if a concrete public archive or permissioned dump is available. Conversion from hcpe-like formats must preserve side-to-move, terminal status, and legality."
       },
       {
         "name": "Floodgate yearly archives",
         "source_class": "engine_public",
+        "quality_tier": "filtered_fallback_only",
         "license": "public floodgate archive; preserve provenance and checksums",
         "url": "https://wdoor.c.u-tokyo.ac.jp/",
         "format": "csa.7z",
-        "priority": 2,
-        "notes": "Supplemental high-engine-play source, 2008-2026 yearly archives."
+        "priority": 50,
+        "notes": "Do not use wholesale. Use only with a documented engine-name/rating/date allowlist for top engines; otherwise keep for evaluation and coverage audits."
       }
     ],
     "go": [
       {
+        "name": "KataGo distributed self-play training data",
+        "source_class": "engine_top",
+        "quality_tier": "primary_3b",
+        "license": "verify katagotraining.org data-use policy before redistribution",
+        "url": "https://katagotraining.org/",
+        "format": "sgf/training-data",
+        "priority": 1,
+        "notes": "Primary Go source. Superhuman self-play from KataGo public distributed training; retain run/network/rules metadata."
+      },
+      {
         "name": "OGS public SGF collection",
         "source_class": "human_public",
+        "quality_tier": "excluded_from_primary",
         "license": "research/AI training stated by corpus maintainer; verify before redistribution",
         "url": "https://za3k.com/ogs/",
         "format": "sgf",
-        "priority": 1,
-        "notes": "Large public Go corpus; apply rank filters for stronger-play subsets."
+        "priority": 99,
+        "notes": "Do not use unfiltered for primary training. Only use with strict rank filters or for robustness/evaluation."
       }
     ],
     "othello": [
       {
-        "name": "tdooms/othello",
-        "source_class": "human_public_or_generated",
-        "license": "verify Hugging Face dataset card before redistribution",
-        "url": "https://huggingface.co/datasets/tdooms/othello",
-        "format": "hf_dataset",
+        "name": "Edax high-depth self-play generation",
+        "source_class": "engine_top",
+        "quality_tier": "primary_3b_generated",
+        "license": "generated records can be owned by this project; verify Edax engine license for redistribution of binaries/configs",
+        "url": "https://github.com/abulmo/edax-reversi",
+        "format": "generated_pgn/jsonl",
         "priority": 1,
-        "notes": "About 23.8M 64-move rows."
+        "notes": "Primary volume path. Generate deterministic self-play with fixed engine version, depth/time settings, opening seed policy, and validation replay."
       },
       {
-        "name": "MetaOthello",
-        "source_class": "generated_or_curated",
-        "license": "verify Hugging Face dataset card before redistribution",
-        "url": "https://huggingface.co/datasets/aviralchawla/metaothello",
-        "format": "hf_dataset",
+        "name": "WTHOR tournament database",
+        "source_class": "human_top",
+        "quality_tier": "seed_eval_finetune",
+        "license": "verify French Federation of Othello/WTHOR terms before redistribution",
+        "url": "https://www.ffothello.org/informatique/la-base-wthor/",
+        "format": "wthor/wtb",
         "priority": 2,
-        "notes": "20M classic Othello games plus variants."
+        "notes": "High-quality human tournament seed/evaluation set, but too small for 3B tokens by itself."
+      },
+      {
+        "name": "Random/synthetic public Othello datasets",
+        "source_class": "generated_or_curated",
+        "quality_tier": "excluded_from_policy_training",
+        "license": "verify each dataset card before redistribution",
+        "url": "https://huggingface.co/datasets/tdooms/othello",
+        "format": "hf_dataset",
+        "priority": 99,
+        "notes": "Do not use for policy imitation if generated by random legal moves. Useful only for board-state representation or legality diagnostics."
       }
     ],
     "poker": [
       {
-        "name": "PHH dataset",
-        "source_class": "engine_public_or_research",
-        "license": "MIT for GitHub subset; verify Zenodo full corpus license",
+        "name": "PHH full corpus ACPC public subsets",
+        "source_class": "engine_top",
+        "quality_tier": "primary_3b",
+        "license": "MIT for GitHub subset; verify Zenodo full corpus license and ACPC redistribution constraints",
         "url": "https://github.com/uoftcprg/phh-dataset",
         "format": "phh/phhs",
         "priority": 1,
-        "notes": "Use public actions only; do not leak private hole cards before decisions."
+        "accepted_subsets": ["ACPC", "Annual Computer Poker Competition"],
+        "notes": "Use ACPC engine competition hands from the full corpus. Filter by path/metadata before tokenization; generic online hand histories are not primary."
+      },
+      {
+        "name": "Pluribus released hands in PHH-compatible corpus",
+        "source_class": "engine_top",
+        "quality_tier": "seed_eval_finetune",
+        "license": "verify Brown and Sandholm supplementary data terms",
+        "url": "https://github.com/uoftcprg/phh-dataset",
+        "format": "phh/phhs",
+        "priority": 2,
+        "accepted_subsets": ["Pluribus"],
+        "notes": "Very high quality but small compared with 3B-token target; use as top-quality seed/evaluation or mix with ACPC."
+      },
+      {
+        "name": "Generic online poker hand histories in PHH corpus",
+        "source_class": "human_public",
+        "quality_tier": "excluded_from_primary",
+        "license": "verify source-specific terms",
+        "url": "https://github.com/uoftcprg/phh-dataset",
+        "format": "phh/phhs",
+        "priority": 99,
+        "notes": "Do not use unfiltered for primary policy training; stakes and player quality are mixed."
       }
     ],
     "bridge": [
       {
+        "name": "WBridge5 / RoboBridge high-quality self-play generation",
+        "source_class": "engine_top",
+        "quality_tier": "primary_3b_generated",
+        "license": "verify engine license and generated-record redistribution terms",
+        "url": "https://www.computerbridge.se/wbridge5/",
+        "format": "generated_pbn",
+        "priority": 1,
+        "notes": "Primary volume path if engine automation is available. Store engine version, convention card, deal seed, DDS/settings, and validation checks."
+      },
+      {
         "name": "Vugraph Project / ComputerBridge PBN finals",
         "source_class": "human_top",
+        "quality_tier": "seed_eval_finetune",
         "license": "verify event and archive redistribution terms before mirroring raw records",
         "url": "https://www.computerbridge.se/finals-world-championship-in-pbn/",
         "format": "pbn",
-        "priority": 1,
-        "notes": "World Championship, NABC, Bermuda Bowl, Venice Cup, Vanderbilt and other high-level PBN files. Highest-quality seed, but unlikely to reach 3B tokens alone."
+        "priority": 2,
+        "notes": "World Championship, NABC, Bermuda Bowl, Venice Cup, Vanderbilt and other top event PBN files. High-quality seed, but too small for 3B tokens alone."
       },
       {
         "name": "BBO/Vugraph public archives",
         "source_class": "human_public",
+        "quality_tier": "filtered_fallback_only",
         "license": "verify BBO/Vugraph terms before bulk redistribution",
         "url": "https://www.bridgebase.com/vugraph/",
         "format": "lin/pbn",
-        "priority": 2,
-        "notes": "Largest practical source of expert and public tournament bridge records; convert LIN to PBN before ingestion. Use event filters for top-level play."
+        "priority": 50,
+        "notes": "Use only with event/player filters for top-level broadcast matches; convert LIN to PBN before ingestion and preserve event provenance."
       }
     ]
   }

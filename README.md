@@ -107,6 +107,20 @@ Each dataset source should be labeled in downstream manifests:
 - `generated_or_curated`
 
 Do not merge source classes silently; training can weight them differently.
+For primary 3B-token builds, use only `engine_top` or `human_top` sources unless
+the manifest documents a strict top-player/top-engine filter. General public
+archives such as raw Lichess, OGS, Floodgate, BBO/Vugraph, and generic online
+poker hand histories are fallback/evaluation sources, not default training
+sources.
+
+Current primary volume plan:
+
+- chess: Lc0 self-play training PGNs, optionally mixed with Lichess Elite
+- shogi: AobaZero self-play; dlshogi-style archives only when concrete license and conversion are verified
+- Go: KataGo distributed self-play data
+- Othello: generated high-depth Edax self-play, with WTHOR as a human-top seed/evaluation set
+- poker: ACPC engine subsets from the PHH full corpus; Pluribus as a small top-quality seed/evaluation set
+- bridge: generated WBridge5/RoboBridge self-play for volume, with ComputerBridge/WBF/ACBL finals as human-top seeds
 
 ## Poker Views
 
@@ -134,7 +148,5 @@ Contract bridge ingestion supports PBN records with `Deal`, `Auction`, and
 optional `Play` sections. Bridge rows emit `view_complete`, four
 `view_imperfect_*` rows, and `view_omniscient`; play tokens include the acting
 seat (`play:N:As`) and cards use the same rank+suit notation as poker. The source
-plan prioritizes top-level World Championship, NABC, Bermuda Bowl, Venice Cup,
-Vanderbilt, and BBO/Vugraph archives; the curated top-event PBN sources are high
-quality but may need large public Vugraph archive
-supplementation to reach the 3B-token target.
+plan prioritizes generated top-engine bridge for volume plus top-event PBN seeds.
+BBO/Vugraph archives should be used only with explicit event/player filters.

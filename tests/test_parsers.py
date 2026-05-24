@@ -649,5 +649,23 @@ PI
             with self.assertRaises(ProductionDatasetError):
                 build_game_shards("chess", [chess_path], out_dir, target_tokens=4, max_records=1)
 
+    def test_source_catalog_prioritizes_top_quality_sources(self):
+        catalog_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "source_catalog.json")
+        with open(catalog_path, "r", encoding="utf-8") as f:
+            catalog = json.load(f)
+        self.assertEqual(catalog["target_tokens_per_game"], 3_000_000_000)
+        for game, sources in catalog["games"].items():
+            primary = [source for source in sources if source["priority"] == 1]
+            self.assertEqual(len(primary), 1, game)
+            self.assertIn(primary[0]["source_class"], {"engine_top", "human_top"}, game)
+            self.assertNotIn(primary[0]["quality_tier"], {"excluded_from_primary", "filtered_fallback_only"}, game)
+            for source in sources:
+                if source["source_class"] == "human_public":
+                    self.assertGreater(source["priority"], 1, source["name"])
+                    self.assertIn(source["quality_tier"], {
+                        "excluded_from_primary",
+                        "filtered_fallback_only",
+                    }, source["name"])
+
 if __name__ == "__main__":
     unittest.main()
