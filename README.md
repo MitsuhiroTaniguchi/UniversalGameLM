@@ -27,6 +27,7 @@ Example:
 python3 build_production.py \
   --game shogi \
   --input /path/to/aobazero_csa_dir \
+  --source-name "AobaZero self-play CSA archives" \
   --output-dir production_shards/shogi \
   --target-tokens 3000000000
 ```
@@ -38,6 +39,7 @@ load the MahjongLM tokenizer assets and emit MahjongLM-style rows:
 python3 build_production.py \
   --game poker \
   --input /path/to/phh_dir \
+  --source-name "PHH full corpus ACPC public subsets" \
   --output-dir production_shards/poker \
   --output-format mahjonglm_jsonl \
   --mahjonglm-tokenizer-dir /path/to/mahjonglm-dataset/tokenizer \
@@ -59,6 +61,7 @@ export HF_REPO_ID='your-name/universal-game-lm-dataset'
 python3 build_production.py \
   --game shogi \
   --input /path/to/aobazero_csa_dir \
+  --source-name "AobaZero self-play CSA archives" \
   --output-dir production_shards/shogi \
   --hf-repo-id "$HF_REPO_ID" \
   --delete-after-upload
@@ -111,16 +114,17 @@ For primary 3B-token builds, use only `engine_top` or `human_top` sources unless
 the manifest documents a strict top-player/top-engine filter. General public
 archives such as raw Lichess, OGS, Floodgate, BBO/Vugraph, and generic online
 poker hand histories are fallback/evaluation sources, not default training
-sources.
+sources. `build_production.py` enforces this for uncapped 3B-token builds through
+`--source-name`; smoke tests may use `--max-records` without a catalog entry.
 
 Current primary volume plan:
 
-- chess: Lc0 self-play training PGNs, optionally mixed with Lichess Elite
+- chess: Stockfish fishtest LTC PGNs, mixed with Lc0 self-play for style diversity; Lichess Elite as human-top mix/evaluation
 - shogi: AobaZero self-play; dlshogi-style archives only when concrete license and conversion are verified
-- Go: KataGo distributed self-play data
-- Othello: generated high-depth Edax self-play, with WTHOR as a human-top seed/evaluation set
+- Go: KataGo distributed self-play data; ZhiziGo/KataGo mirrors only after conversion validation
+- Othello: Egaroucid/Edax engine self-play, with solved-line and WTHOR sets for seed/evaluation
 - poker: ACPC engine subsets from the PHH full corpus; Pluribus as a small top-quality seed/evaluation set
-- bridge: generated WBridge5/RoboBridge self-play for volume, with ComputerBridge/WBF/ACBL finals as human-top seeds
+- bridge: generated WBridge5/RoboBridge/OpenSpiel/DDS-assisted data for volume, with ComputerBridge/WBF/ACBL finals as human-top seeds
 
 ## Poker Views
 

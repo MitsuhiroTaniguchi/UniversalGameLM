@@ -435,6 +435,31 @@ def load_source_catalog(path):
         return json.load(f)
 
 
+def source_catalog_entry(catalog, game, source_name):
+    for source in catalog.get("games", {}).get(game, []):
+        if source.get("name") == source_name:
+            return source
+    raise ProductionDatasetError(f"Source '{source_name}' is not listed for {game} in source catalog")
+
+
+def assert_source_allowed_for_primary_build(catalog, game, source_name, allow_fallback=False):
+    source = source_catalog_entry(catalog, game, source_name)
+    source_class = source.get("source_class")
+    quality_tier = source.get("quality_tier")
+    if source_class in {"engine_top", "human_top"} and quality_tier not in {
+        "excluded_from_primary",
+        "excluded_from_policy_training",
+        "filtered_fallback_only",
+    }:
+        return source
+    if allow_fallback and quality_tier in {"filtered_fallback_only", "primary_or_mix", "candidate_primary"}:
+        return source
+    raise ProductionDatasetError(
+        f"Source '{source_name}' is not allowed for a primary {game} build "
+        f"(source_class={source_class}, quality_tier={quality_tier})"
+    )
+
+
 def maybe_hf_uploader(repo_id):
     if not repo_id:
         return None

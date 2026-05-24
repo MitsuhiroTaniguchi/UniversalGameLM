@@ -15,7 +15,13 @@ from src.bridge_parser import parse_pbn_to_tokens
 from src.tokenizer import UniversalGameTokenizer
 from src.download import safe_extract_zip
 from src.hf_uploader import HuggingFaceShardUploader
-from src.production_pipeline import build_game_shards, validate_entry, ProductionDatasetError
+from src.production_pipeline import (
+    assert_source_allowed_for_primary_build,
+    build_game_shards,
+    load_source_catalog,
+    validate_entry,
+    ProductionDatasetError,
+)
 from src.stats import DatasetStatsAccumulator
 from src.mahjonglm_compat import entry_to_mahjonglm_row, tokens_to_mahjonglm_stream
 
@@ -651,8 +657,7 @@ PI
 
     def test_source_catalog_prioritizes_top_quality_sources(self):
         catalog_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "source_catalog.json")
-        with open(catalog_path, "r", encoding="utf-8") as f:
-            catalog = json.load(f)
+        catalog = load_source_catalog(catalog_path)
         self.assertEqual(catalog["target_tokens_per_game"], 3_000_000_000)
         for game, sources in catalog["games"].items():
             primary = [source for source in sources if source["priority"] == 1]
@@ -666,6 +671,19 @@ PI
                         "excluded_from_primary",
                         "filtered_fallback_only",
                     }, source["name"])
+
+        chess_primary = assert_source_allowed_for_primary_build(
+            catalog,
+            "chess",
+            "Stockfish fishtest LTC PGNs",
+        )
+        self.assertEqual(chess_primary["source_class"], "engine_top")
+        with self.assertRaises(ProductionDatasetError):
+            assert_source_allowed_for_primary_build(
+                catalog,
+                "chess",
+                "Raw Lichess standard rated games",
+            )
 
 if __name__ == "__main__":
     unittest.main()

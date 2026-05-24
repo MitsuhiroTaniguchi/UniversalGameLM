@@ -8,14 +8,34 @@
   "games": {
     "chess": [
       {
+        "name": "Stockfish fishtest LTC PGNs",
+        "source_class": "engine_top",
+        "quality_tier": "primary_3b",
+        "license": "LGPL-3.0 dataset; preserve Stockfish/fishtest attribution",
+        "url": "https://huggingface.co/datasets/official-stockfish/fishtest_pgns",
+        "format": "pgn.gz",
+        "priority": 1,
+        "notes": "About one billion Stockfish LTC games with engine eval/depth comments and metadata. Best verified volume source for chess; prefer before lower-quality human data."
+      },
+      {
         "name": "Leela Chess Zero self-play training PGNs",
         "source_class": "engine_top",
         "quality_tier": "primary_3b",
         "license": "verify Lc0 data license and attribution before redistribution",
         "url": "https://storage.lczero.org/files/training_pgns/",
         "format": "pgn",
-        "priority": 1,
-        "notes": "Superhuman engine self-play. Use as the main volume source for 3B-token chess builds; keep network/run metadata in shard manifests."
+        "priority": 2,
+        "notes": "Superhuman neural-engine self-play. Mix with Stockfish fishtest to reduce single-engine style bias; keep network/run metadata in shard manifests."
+      },
+      {
+        "name": "TCEC engine championship PGNs",
+        "source_class": "engine_top",
+        "quality_tier": "seed_eval_finetune",
+        "license": "CC BY-SA 3.0 for PGN game files",
+        "url": "https://github.com/TCEC-Chess/tcecgames",
+        "format": "pgn",
+        "priority": 3,
+        "notes": "Highest-profile engine tournament games. Very high quality but too small for 3B tokens; use as evaluation, seed, and style-diversity mix."
       },
       {
         "name": "Lichess Elite Database",
@@ -24,7 +44,7 @@
         "license": "verify database.nikonoel.fr redistribution terms",
         "url": "https://database.nikonoel.fr/",
         "format": "pgn",
-        "priority": 2,
+        "priority": 4,
         "notes": "Filtered Lichess standard games by strong-player rating thresholds with bullet excluded. Prefer over raw Lichess for human-style top play."
       },
       {
@@ -54,10 +74,10 @@
         "source_class": "engine_top",
         "quality_tier": "candidate_primary",
         "license": "verify each released archive or developer-provided link before redistribution",
-        "url": "https://github.com/TadaoYamaoka/DeepLearningShogi",
+        "url": "https://tadaoyamaoka.hatenablog.com/entry/2021/05/06/223701",
         "format": "hcpe/hcpe3/csa",
         "priority": 2,
-        "notes": "High-quality candidate if a concrete public archive or permissioned dump is available. Conversion from hcpe-like formats must preserve side-to-move, terminal status, and legality."
+        "notes": "GCT/dlshogi training archives include large hcpe3 self-play/evaluation data. Treat as candidate-primary only after concrete file availability, license, and hcpe-to-move-stream reconstruction are verified."
       },
       {
         "name": "Floodgate yearly archives",
@@ -79,7 +99,27 @@
         "url": "https://katagotraining.org/",
         "format": "sgf/training-data",
         "priority": 1,
-        "notes": "Primary Go source. Superhuman self-play from KataGo public distributed training; retain run/network/rules metadata."
+        "notes": "Primary Go source. Public stats show tens of millions of training games and billions of rows; retain run/network/rules/game-type metadata and prefer standard 19x19 normal/rating games for MahjongLM-like move streams."
+      },
+      {
+        "name": "ZhiziGo KataGo self-play mirror",
+        "source_class": "engine_top",
+        "quality_tier": "candidate_primary",
+        "license": "MIT per dataset card; verify before redistribution",
+        "url": "https://www.modelscope.cn/datasets/sigmoid/KataGo_ZhiziGo_selfplay",
+        "format": "katago_training_tar",
+        "priority": 2,
+        "notes": "Large modern KataGo-format self-play mirror. Use as a practical bulk source if conversion from KataGo training format to SGF/move stream is implemented and validated."
+      },
+      {
+        "name": "Joe's Go Database",
+        "source_class": "human_top",
+        "quality_tier": "seed_eval_finetune",
+        "license": "public domain statement by maintainer",
+        "url": "https://pjreddie.com/projects/jgdb/",
+        "format": "sgf",
+        "priority": 3,
+        "notes": "More than 500k professional/top-amateur SGFs. Good human-style seed/evaluation corpus; not enough for 3B tokens."
       },
       {
         "name": "OGS public SGF collection",
@@ -94,14 +134,34 @@
     ],
     "othello": [
       {
+        "name": "Egaroucid self-play training data",
+        "source_class": "engine_top",
+        "quality_tier": "primary_or_mix",
+        "license": "verify release-specific terms before redistribution",
+        "url": "https://github.com/Nyanyan/Egaroucid5/releases/",
+        "format": "selfplay_data",
+        "priority": 1,
+        "notes": "Public Othello AI self-play training data is available from Egaroucid releases/docs. Prefer over random legal-move datasets; convert to terminal move streams with replay validation."
+      },
+      {
         "name": "Edax high-depth self-play generation",
         "source_class": "engine_top",
         "quality_tier": "primary_3b_generated",
         "license": "generated records can be owned by this project; verify Edax engine license for redistribution of binaries/configs",
         "url": "https://github.com/abulmo/edax-reversi",
         "format": "generated_pgn/jsonl",
-        "priority": 1,
+        "priority": 2,
         "notes": "Primary volume path. Generate deterministic self-play with fixed engine version, depth/time settings, opening seed policy, and validation replay."
+      },
+      {
+        "name": "Solved-line / perfect-play Othello seeds",
+        "source_class": "engine_top",
+        "quality_tier": "seed_eval_finetune",
+        "license": "derive from cited solved-game publication/artifacts only after license review",
+        "url": "https://arxiv.org/abs/2310.19387",
+        "format": "move_sequence",
+        "priority": 3,
+        "notes": "Othello is weakly solved as a draw under perfect play. Use solved lines and deviations as tiny gold evaluation/anchor sets, not as volume data."
       },
       {
         "name": "WTHOR tournament database",
@@ -110,7 +170,7 @@
         "license": "verify French Federation of Othello/WTHOR terms before redistribution",
         "url": "https://www.ffothello.org/informatique/la-base-wthor/",
         "format": "wthor/wtb",
-        "priority": 2,
+        "priority": 4,
         "notes": "High-quality human tournament seed/evaluation set, but too small for 3B tokens by itself."
       },
       {
@@ -160,14 +220,34 @@
     ],
     "bridge": [
       {
+        "name": "OpenSpiel bridge generated data / WBridge5-style benchmarks",
+        "source_class": "engine_top",
+        "quality_tier": "candidate_primary",
+        "license": "verify OpenSpiel dataset/model license and generated-record terms",
+        "url": "https://console.cloud.google.com/storage/browser/openspiel-data/bridge",
+        "format": "generated_bridge_data",
+        "priority": 1,
+        "notes": "OpenSpiel bridge work references generated bridge data. Prefer only if full auction+play reconstruction and convention metadata can be validated."
+      },
+      {
         "name": "WBridge5 / RoboBridge high-quality self-play generation",
         "source_class": "engine_top",
         "quality_tier": "primary_3b_generated",
         "license": "verify engine license and generated-record redistribution terms",
         "url": "https://www.computerbridge.se/wbridge5/",
         "format": "generated_pbn",
-        "priority": 1,
+        "priority": 2,
         "notes": "Primary volume path if engine automation is available. Store engine version, convention card, deal seed, DDS/settings, and validation checks."
+      },
+      {
+        "name": "DDS-assisted double-dummy play generation",
+        "source_class": "engine_top",
+        "quality_tier": "candidate_primary",
+        "license": "verify dds-bridge/dds license and generated-record terms",
+        "url": "https://github.com/dds-bridge/dds",
+        "format": "generated_pbn",
+        "priority": 3,
+        "notes": "Use for omniscient play-quality generation and validation, not as a replacement for single-dummy bidding unless paired with a strong bidding engine."
       },
       {
         "name": "Vugraph Project / ComputerBridge PBN finals",
@@ -176,7 +256,7 @@
         "license": "verify event and archive redistribution terms before mirroring raw records",
         "url": "https://www.computerbridge.se/finals-world-championship-in-pbn/",
         "format": "pbn",
-        "priority": 2,
+        "priority": 4,
         "notes": "World Championship, NABC, Bermuda Bowl, Venice Cup, Vanderbilt and other top event PBN files. High-quality seed, but too small for 3B tokens alone."
       },
       {

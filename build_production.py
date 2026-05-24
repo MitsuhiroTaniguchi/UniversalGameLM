@@ -6,7 +6,9 @@ import sys
 
 from src.production_pipeline import (
     DEFAULT_TARGET_TOKENS,
+    assert_source_allowed_for_primary_build,
     build_game_shards,
+    load_source_catalog,
     maybe_hf_uploader,
 )
 from src.tokenizer import UniversalGameTokenizer
@@ -26,7 +28,28 @@ def main():
     parser.add_argument("--output-format", choices=["universal_jsonl", "mahjonglm_jsonl"], default="universal_jsonl")
     parser.add_argument("--mahjonglm-tokenizer-dir", default=os.environ.get("MAHJONGLM_TOKENIZER_DIR"))
     parser.add_argument("--tokenizer-output-dir", default=os.environ.get("TOKENIZER_OUTPUT_DIR"))
+    parser.add_argument("--source-catalog", default="source_catalog.json")
+    parser.add_argument("--source-name", action="append", help="Catalog source name for each --input. Required for uncapped production-size builds.")
+    parser.add_argument("--allow-fallback-source", action="store_true", help="Permit catalog entries marked as filtered fallback/candidate sources.")
     args = parser.parse_args()
+
+    if args.source_name:
+        if len(args.source_name) not in {1, len(args.input)}:
+            raise RuntimeError("--source-name must be provided once or once per --input")
+        catalog = load_source_catalog(args.source_catalog)
+        names = args.source_name if len(args.source_name) == len(args.input) else args.source_name * len(args.input)
+        for name in names:
+            assert_source_allowed_for_primary_build(
+                catalog,
+                args.game,
+                name,
+                allow_fallback=args.allow_fallback_source,
+            )
+    elif args.max_records is None and args.target_tokens >= DEFAULT_TARGET_TOKENS:
+        raise RuntimeError(
+            "Production 3B-token builds require --source-name so the catalog quality gate can reject low-quality sources. "
+            "Use --source-name with a source_catalog.json entry, or set --max-records for local smoke tests."
+        )
 
     tokenizer = None
     if args.output_format == "mahjonglm_jsonl":
