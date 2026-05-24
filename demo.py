@@ -145,16 +145,22 @@ def main():
 
     download_sources()
 
-    print("\n--- Step 2: Building Shared Universal Vocabulary (streaming pass) ---")
+    print("\n--- Step 2: Collecting Parsed Entries ---")
+    entries = list(iter_dataset_entries())
+    if not entries:
+        raise RuntimeError("No games parsed; dataset was not created.")
+    print(f"Collected {len(entries)} tokenized games for deterministic vocab/serialization.")
+
+    print("\n--- Step 3: Building Shared Universal Vocabulary ---")
     tokenizer = UniversalGameTokenizer(special_tokens=SPECIAL_TOKENS)
-    tokenizer.build_vocab(entry["tokens"] for entry in iter_dataset_entries())
+    tokenizer.build_vocab(entry["tokens"] for entry in entries)
     tokenizer.save_vocab(VOCAB_PATH)
 
-    print("\n--- Step 3: Serializing Dataset (streaming pass) ---")
+    print("\n--- Step 4: Serializing Dataset ---")
     stats = DatasetStatsAccumulator()
     row_count = 0
     with open(DATASET_PATH, "w", encoding="utf-8") as f:
-        for entry in iter_dataset_entries():
+        for entry in entries:
             encoded_ids = tokenizer.encode(entry["tokens"])
             serialized = {
                 "game": entry["game"],
@@ -166,12 +172,9 @@ def main():
             row_count += 1
             f.write(json.dumps(serialized, ensure_ascii=False) + "\n")
 
-    if row_count == 0:
-        raise RuntimeError("No games parsed; dataset was not created.")
-
     print(f"Serialized {row_count} tokenized games to {DATASET_PATH}")
 
-    print("\n--- Step 4: Compiling Dataset Statistics and 3B-Token Gap Report ---")
+    print("\n--- Step 5: Compiling Dataset Statistics and 3B-Token Gap Report ---")
     stats.print_report(target_tokens_per_game=target_tokens_per_game)
     manifest = build_manifest(stats.summary(target_tokens_per_game), target_tokens_per_game)
     with open(MANIFEST_PATH, "w", encoding="utf-8") as f:
@@ -192,7 +195,7 @@ def main():
             )
 
         private_repo = env_bool("HF_PRIVATE", default=True)
-        print(f"\n--- Step 5: Uploading artifacts to Hugging Face dataset repo {repo_id} ---")
+        print(f"\n--- Step 6: Uploading artifacts to Hugging Face dataset repo {repo_id} ---")
         uploader = HuggingFaceShardUploader(repo_id)
         uploaded = uploader.upload_directory_files(
             TOKENIZED_DIR,

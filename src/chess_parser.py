@@ -126,7 +126,7 @@ def parse_pgn_to_tokens(pgn_path, max_games=None):
                 "variant": game.headers.get("Variant", "standard"),
                 "fen": game.headers.get("FEN") if game.headers.get("SetUp") == "1" else None,
                 "source_path": str(Path(pgn_path).resolve()),
-                "game_index": games_parsed + 1,
+                "game_index": games_parsed,
             }
             
             yield tokens, metadata

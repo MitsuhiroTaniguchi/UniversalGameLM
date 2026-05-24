@@ -73,9 +73,19 @@ def validate_othello_moves(moves):
     board = _initial_board()
     color = "B"
     consecutive_passes = 0
+    canonical_moves = []
     for index, move in enumerate(moves):
         canonical = PASS_TOKEN if move in ("pa", "pass") else move
+
+        if canonical != PASS_TOKEN and not legal_moves(board, color):
+            canonical_moves.append(PASS_TOKEN)
+            consecutive_passes += 1
+            color = "W" if color == "B" else "B"
+            if consecutive_passes >= 2:
+                raise ValueError("Moves after double pass are not allowed")
+
         apply_move(board, color, canonical)
+        canonical_moves.append(canonical)
         consecutive_passes = consecutive_passes + 1 if canonical == PASS_TOKEN else 0
         color = "W" if color == "B" else "B"
         if consecutive_passes >= 2:
@@ -83,7 +93,6 @@ def validate_othello_moves(moves):
             if remaining:
                 raise ValueError("Moves after double pass are not allowed")
             break
-    canonical_moves = [PASS_TOKEN if move in ("pa", "pass") else move for move in moves]
     if legal_moves(board, "B") or legal_moves(board, "W"):
         raise ValueError("Othello game is not terminal")
     return canonical_moves

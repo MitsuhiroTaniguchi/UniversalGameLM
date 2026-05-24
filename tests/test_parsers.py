@@ -6,12 +6,12 @@ import gzip
 import json
 import re
 from src.chess_parser import parse_pgn_to_tokens
-from src.shogi_parser import parse_csa_to_tokens
+from src.shogi_parser import parse_csa_to_tokens, parse_shogi_directory
 from src.go_parser import parse_sgf_to_tokens
-from src.othello_parser import parse_othello_pgn_to_tokens
+from src.othello_parser import parse_othello_pgn_to_tokens, validate_othello_moves
 from src.poker_parser import PokerHandSimulator
 from src.poker_parser import parse_phh_to_tokens
-from src.bridge_parser import parse_pbn_to_tokens
+from src.bridge_parser import parse_bridge_inputs, parse_pbn_to_tokens
 from src.tokenizer import UniversalGameTokenizer
 from src.download import safe_extract_zip
 from src.hf_uploader import HuggingFaceShardUploader
@@ -68,6 +68,7 @@ class TestUniversalGameParsers(unittest.TestCase):
             self.assertEqual(tokens[2], "e2e4")
             self.assertEqual(tokens[-1], "<eos>")
             self.assertEqual(meta["white"], "Player1")
+            self.assertEqual(meta["game_index"], 1)
         finally:
             os.remove(temp_path)
 
@@ -156,6 +157,12 @@ class TestUniversalGameParsers(unittest.TestCase):
         finally:
             os.remove(temp_path)
 
+    def test_othello_validation_inserts_implicit_passes(self):
+        moves_without_passes = [move for move in TERMINAL_OTHELLO_MOVES if move != "pass"]
+        canonical = validate_othello_moves(moves_without_passes)
+        self.assertGreater(canonical.count("pass"), 0)
+        self.assertEqual([move for move in canonical if move != "pass"], moves_without_passes)
+
     def test_othello_validation_rejects_duplicate_or_illegal_moves(self):
         with self.assertRaises(ProductionDatasetError):
             validate_entry({
@@ -221,6 +228,28 @@ HA H9 H5 H2
                     self.assertEqual(sum(token.startswith("hand:") for token in view_tokens), 1)
                 if view_meta["view_type"] == "omniscient":
                     self.assertEqual(sum(token.startswith("hand:") for token in view_tokens), 4)
+        finally:
+            os.remove(temp_path)
+
+    def test_bridge_parse_inputs_counts_max_games_not_views(self):
+        board = """[Event "World Championship"]
+[Date "2025.01.02"]
+[Dealer "N"]
+[Vulnerable "None"]
+[Deal "N:AKQJ.543.2.98765 T987.2.AKQJ.T432 6543.AKQJ.43.AKQ 2.T9876.T98765.J"]
+[Auction "N"]
+1NT Pass 3NT Pass Pass Pass
+[Play "S"]
+HA H9 H5 H2
+"""
+        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".pbn") as f:
+            f.write(board.replace('World Championship', 'Board 1') + "\n")
+            f.write(board.replace('World Championship', 'Board 2'))
+            temp_path = f.name
+        try:
+            rows = list(parse_bridge_inputs(temp_path, max_games=2))
+            self.assertEqual(len(rows), 12)
+            self.assertEqual(len({meta["view_group_id"] for _, meta in rows}), 2)
         finally:
             os.remove(temp_path)
 
@@ -644,6 +673,54 @@ PI
             self.assertIsNone(meta)
         finally:
             os.remove(temp_path)
+
+    def test_shogi_directory_expands_nested_7z_archives(self):
+        try:
+            import py7zr
+        except ImportError:
+            self.skipTest("py7zr is not installed")
+
+        csa_text = """V2.2
+N+Black
+N-White
+PI
++
++7776FU
+T1
+-3334FU
+T1
++2726FU
+T1
+-8384FU
+T1
++2625FU
+T1
+-8485FU
+T1
++6978KI
+T1
+-4132KI
+T1
++2524FU
+T1
+-2324FU
+T1
+%TORYO
+"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            csa_path = os.path.join(temp_dir, "sample.csa")
+            archive_dir = os.path.join(temp_dir, "archives")
+            os.makedirs(archive_dir)
+            archive_path = os.path.join(archive_dir, "sample.7z")
+            with open(csa_path, "w", encoding="utf-8") as f:
+                f.write(csa_text)
+            with py7zr.SevenZipFile(archive_path, "w") as archive:
+                archive.write(csa_path, arcname="inside/sample.csa")
+            os.remove(csa_path)
+
+            games = list(parse_shogi_directory(temp_dir, max_games=1))
+            self.assertEqual(len(games), 1)
+            self.assertEqual(games[0][0][1], "<shogi>")
 
     def test_production_shards_refuse_to_overwrite_existing_output(self):
         with tempfile.TemporaryDirectory() as temp_dir:

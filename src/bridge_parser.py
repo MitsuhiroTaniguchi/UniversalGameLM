@@ -326,7 +326,7 @@ def parse_pbn_to_tokens(pbn_path, max_games=None):
             print(f"[Warning] Skipping invalid bridge board in {os.path.basename(pbn_path)}: {exc}")
             return None
 
-    with open(pbn_path, "r", encoding="utf-8", errors="strict") as f:
+    with open(pbn_path, "r", encoding="utf-8", errors="ignore") as f:
         for line in f:
             if line.startswith("[Event ") and current:
                 entries = emit_block("".join(current))
@@ -354,6 +354,10 @@ def parse_bridge_inputs(input_path, max_games=None):
         remaining = None if max_games is None else max_games - parsed
         if remaining is not None and remaining <= 0:
             break
+        current_group = None
         for tokens, metadata in parse_pbn_to_tokens(pbn_path, max_games=remaining):
-            parsed += 1
+            group = metadata.get("view_group_id") or metadata.get("hand_index")
+            if group != current_group:
+                current_group = group
+                parsed += 1
             yield tokens, metadata

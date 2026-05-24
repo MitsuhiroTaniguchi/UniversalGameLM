@@ -19,7 +19,8 @@ TERMINAL_MARKERS = {
 
 def _read_csa_text(csa_path):
     path = Path(csa_path)
-    if "".join(path.suffixes[-2:]).lower() == ".csa.xz" or path.suffix.lower() == ".xz":
+    suffix_pair = "".join(path.suffixes[-2:]).lower()
+    if suffix_pair == ".csa.xz" or path.suffix.lower() == ".xz":
         with lzma.open(csa_path, "rt", encoding="utf-8", errors="ignore") as f:
             return f.read()
     with open(csa_path, "r", encoding="utf-8", errors="ignore") as f:
@@ -136,7 +137,7 @@ def iter_csa_files(directory_path):
             if name.lower().endswith((".csa", ".csa.xz")):
                 yield str(Path(root) / name)
             elif name.lower().endswith(".7z"):
-                yield str(Path(root) / name)
+                yield from iter_csa_files(Path(root) / name)
 
 
 def parse_shogi_directory(directory_path, max_games=None):
