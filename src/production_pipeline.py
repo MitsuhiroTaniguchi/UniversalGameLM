@@ -92,7 +92,7 @@ def iter_game_entries(game, input_paths, max_records=None):
                     "ingestion_version": 2,
                 },
             }
-            if max_records and emitted >= max_records:
+            if max_records and emitted >= max_records and game != "poker":
                 return
 
 
@@ -145,10 +145,29 @@ def validate_entry(entry):
             validate_othello_moves(tokens[2:-1])
         except ValueError as exc:
             raise ProductionDatasetError(f"Invalid Othello sequence: {exc}") from exc
-    if game == "poker" and any(
-        pattern.search(token) for token in tokens for pattern in PRIVATE_POKER_TOKEN_PATTERNS
-    ):
-        raise ProductionDatasetError("Poker entry leaks private hole-card tokens")
+    if game == "poker":
+        if not tokens[2].startswith("view_"):
+            raise ProductionDatasetError("Poker entry is missing a view token")
+        if any(pattern.search(token) for token in tokens for pattern in PRIVATE_POKER_TOKEN_PATTERNS):
+            raise ProductionDatasetError("Poker entry leaks raw private hole-card tokens")
+        view_type = (entry.get("metadata") or {}).get("view_type")
+        if tokens[2] == "view_complete":
+            if view_type not in (None, "complete"):
+                raise ProductionDatasetError("Poker complete view metadata mismatch")
+            if any(token.startswith(("private_cards:", "deck:")) for token in tokens):
+                raise ProductionDatasetError("Poker complete view contains hidden-card tokens")
+        elif tokens[2].startswith("view_imperfect_p"):
+            viewer = tokens[2].removeprefix("view_imperfect_")
+            private_tokens = [token for token in tokens if token.startswith("private_cards:")]
+            if len(private_tokens) != 1 or not private_tokens[0].startswith(f"private_cards:{viewer}:"):
+                raise ProductionDatasetError("Poker imperfect view must contain exactly the viewer's private cards")
+            if any(token.startswith("deck:") for token in tokens):
+                raise ProductionDatasetError("Poker imperfect view cannot contain deck tokens")
+        elif tokens[2] == "view_omniscient":
+            if not any(token.startswith("deck:") for token in tokens):
+                raise ProductionDatasetError("Poker omniscient view is missing sampled deck token")
+        else:
+            raise ProductionDatasetError(f"Unknown poker view token: {tokens[2]}")
 
 
 class JsonlShardWriter:

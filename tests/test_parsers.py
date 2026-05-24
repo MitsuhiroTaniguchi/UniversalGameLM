@@ -280,12 +280,13 @@ class TestUniversalGameParsers(unittest.TestCase):
             temp_path = f.name
         try:
             hands = list(parse_phh_to_tokens(temp_path))
-            self.assertEqual(len(hands), 1)
+            self.assertEqual(len(hands), 4)
             tokens, meta = hands[0]
             self.assertNotIn("quoted_venue_must_not_become_action", tokens)
             self.assertNotIn("alice", tokens)
             self.assertNotIn("deal_hole_p1_ahad", tokens)
-            self.assertEqual(tokens[2:], ["post_blind_p1_50", "post_blind_p2_100", "call_p1", "<eos>"])
+            self.assertEqual(tokens[2:], ["view_complete", "post_blind_p1_50", "post_blind_p2_100", "call_p1", "<eos>"])
+            self.assertEqual(meta["view_type"], "complete")
             self.assertEqual(meta["private_actions_excluded"], 1)
         finally:
             os.remove(temp_path)
@@ -310,14 +311,27 @@ actions = [
 ]
 """)
             hands = list(parse_phh_to_tokens(phh_dir))
-            self.assertEqual(len(hands), 1)
-            tokens, meta = hands[0]
-            self.assertIn("VARIANT:nt", tokens)
-            self.assertIn("p1_cc", tokens)
-            self.assertIn("p2_cbr_300", tokens)
-            self.assertIn("p1_sm_hidden", tokens)
-            self.assertFalse(any("ahad" in token or "kckd" in token for token in tokens))
-            self.assertEqual(meta["private_actions_excluded"], 2)
+            self.assertEqual(len(hands), 4)
+            for tokens, meta in hands:
+                validate_entry({"game": "poker", "tokens": tokens, "metadata": meta})
+            views = {meta["view_type"]: (tokens, meta) for tokens, meta in hands if meta["view_type"] != "imperfect"}
+            imperfect = {(meta["viewer_seat"]): (tokens, meta) for tokens, meta in hands if meta["view_type"] == "imperfect"}
+            complete_tokens, complete_meta = views["complete"]
+            self.assertIn("view_complete", complete_tokens)
+            self.assertIn("VARIANT:nt", complete_tokens)
+            self.assertIn("p1_cc", complete_tokens)
+            self.assertIn("p2_cbr_300", complete_tokens)
+            self.assertIn("p1_sm_hidden", complete_tokens)
+            self.assertFalse(any("AhAd" in token or "KcKd" in token for token in complete_tokens))
+            self.assertEqual(complete_meta["private_actions_excluded"], 2)
+            self.assertIn("private_cards:p1:AhAd", imperfect[1][0])
+            self.assertNotIn("private_cards:p2:KcKd", imperfect[1][0])
+            self.assertIn("private_cards:p2:KcKd", imperfect[2][0])
+            omniscient_tokens, _ = views["omniscient"]
+            self.assertIn("view_omniscient", omniscient_tokens)
+            self.assertIn("private_cards:p1:AhAd", omniscient_tokens)
+            self.assertIn("private_cards:p2:KcKd", omniscient_tokens)
+            self.assertTrue(any(token.startswith("deck:") for token in omniscient_tokens))
 
     def test_shogi_parser_rejects_missing_terminal(self):
         with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".csa") as f:

@@ -3,11 +3,14 @@ import random
 import collections
 import re
 import ast
+import hashlib
 from pathlib import Path
 
 # Card representation: Values 2-A, Suits h, d, c, s
 VALUES = "23456789TJQKA"
 SUITS = "hdcs"
+FULL_DECK = [f"{v}{s}" for v in VALUES for s in SUITS]
+CARD_RE = re.compile(r"[2-9TJQKA][hdcs]", re.IGNORECASE)
 
 class PokerHandSimulator:
     """
@@ -322,6 +325,169 @@ def _phh_state_tokens(text):
             tokens.append(f"{field.upper()}:{compact}")
     return tokens
 
+
+def _normalize_card(card):
+    card = card.strip()
+    if not re.fullmatch(r"[2-9TJQKA][hdcs]", card, flags=re.IGNORECASE):
+        raise ValueError(f"Invalid poker card: {card}")
+    return card[0].upper() + card[1].lower()
+
+
+def _extract_cards(text):
+    return [_normalize_card(card) for card in CARD_RE.findall(text)]
+
+
+def _cards_token(cards):
+    return "".join(cards)
+
+
+def _seat_from_action(action):
+    match = re.search(r"\bp(\d+)\b", action.lower())
+    return int(match.group(1)) if match else None
+
+
+def _private_hole_from_action(action):
+    compact = re.sub(r"\s+", " ", action.strip().lower())
+    if not (
+        re.match(r"^d dh\b", compact)
+        or re.match(r"^dh\b", compact)
+        or re.match(r"^deal_hole\b", compact)
+        or re.match(r"^hole\b", compact)
+    ):
+        return None
+    seat = _seat_from_action(action)
+    cards = _extract_cards(action)
+    if seat is None or len(cards) < 2:
+        return None
+    return seat, cards[:2]
+
+
+def _players_from_state_and_actions(state_tokens, actions, private_holes):
+    seats = set(private_holes)
+    for action in actions:
+        seat = _seat_from_action(action)
+        if seat is not None:
+            seats.add(seat)
+    for token in state_tokens:
+        if token.startswith("STARTING_STACKS:[") and token.endswith("]"):
+            stacks = [part for part in token[len("STARTING_STACKS:["):-1].split(",") if part]
+            seats.update(range(1, len(stacks) + 1))
+    return sorted(seats)
+
+
+def _public_action_token(action):
+    sanitized = _sanitize_poker_action(action)
+    if not sanitized:
+        return None
+    if re.match(r"^p\d+_sm_-?$", sanitized):
+        return sanitized.replace("_-", "_hidden")
+    return sanitized
+
+
+def _observed_cards_from_public_actions(actions):
+    observed = []
+    for action in actions:
+        compact = re.sub(r"\s+", " ", action.strip().lower())
+        if re.match(r"^(?:d db|db|deal_board|board)\b", compact):
+            observed.extend(_extract_cards(action))
+        elif re.match(r"^p\d+ sm\b", compact) and "-" not in compact:
+            observed.extend(_extract_cards(action))
+    return observed
+
+
+def _assert_unique_cards(cards):
+    duplicates = [card for card, count in collections.Counter(cards).items() if count > 1]
+    if duplicates:
+        raise ValueError(f"Duplicate cards in PHH hand: {duplicates}")
+
+
+def _completion_seed(actions, state_tokens):
+    digest = hashlib.sha256("|".join(state_tokens + actions).encode("utf-8")).hexdigest()
+    return int(digest[:16], 16)
+
+
+def _complete_private_holes(actions, state_tokens, private_holes):
+    public_cards = _observed_cards_from_public_actions(actions)
+    known_private_cards = [card for cards in private_holes.values() for card in cards]
+    _assert_unique_cards(public_cards + known_private_cards)
+    players = _players_from_state_and_actions(state_tokens, actions, private_holes)
+    used = set(public_cards + known_private_cards)
+    available = [card for card in FULL_DECK if card not in used]
+    rng = random.Random(_completion_seed(actions, state_tokens))
+    rng.shuffle(available)
+
+    completed = {seat: list(cards) for seat, cards in private_holes.items()}
+    for seat in players:
+        if seat not in completed:
+            completed[seat] = [available.pop(), available.pop()]
+
+    deck = public_cards + [card for seat in players for card in completed[seat]] + available
+    _assert_unique_cards(deck)
+    return completed, deck
+
+
+def poker_view_entries(actions, state_tokens):
+    private_holes = {}
+    public_actions = []
+    private_excluded = 0
+    for action in actions:
+        private = _private_hole_from_action(action)
+        if private is not None:
+            seat, cards = private
+            private_holes[seat] = cards
+            private_excluded += 1
+            continue
+        if not _is_public_phh_action(action):
+            private_excluded += 1
+            continue
+        token = _public_action_token(action)
+        if token:
+            public_actions.append(token)
+
+    if len(public_actions) < 2:
+        return []
+
+    completed_holes, deck = _complete_private_holes(actions, state_tokens, private_holes)
+    base_metadata = {
+        "move_count": len(public_actions),
+        "private_actions_excluded": private_excluded,
+        "completion_policy": "uniform_unknown_cards_v1",
+        "completion_seed": _completion_seed(actions, state_tokens),
+    }
+
+    entries = [
+        (
+            ["<bos>", "<poker>", "view_complete"] + state_tokens + public_actions + ["<eos>"],
+            {**base_metadata, "view_type": "complete", "viewer_seat": None},
+        )
+    ]
+
+    for seat in sorted(completed_holes):
+        hole_token = f"private_cards:p{seat}:{_cards_token(completed_holes[seat])}"
+        entries.append(
+            (
+                ["<bos>", "<poker>", f"view_imperfect_p{seat}", hole_token] + state_tokens + public_actions + ["<eos>"],
+                {**base_metadata, "view_type": "imperfect", "viewer_seat": seat},
+            )
+        )
+
+    private_tokens = [
+        f"private_cards:p{seat}:{_cards_token(cards)}"
+        for seat, cards in sorted(completed_holes.items())
+    ]
+    entries.append(
+        (
+            ["<bos>", "<poker>", "view_omniscient"]
+            + private_tokens
+            + [f"deck:{_cards_token(deck)}"]
+            + state_tokens
+            + public_actions
+            + ["<eos>"],
+            {**base_metadata, "view_type": "omniscient", "viewer_seat": None},
+        )
+    )
+    return entries
+
 def iter_phh_action_lists(phh_path):
     """Streams PHH action arrays without loading the whole file."""
     state_lines = []
@@ -383,32 +549,19 @@ def parse_phh_to_tokens(phh_path, max_hands=None):
     parsed = 0
     for source_file in iter_phh_files(phh_path):
         for actions, state_tokens in iter_phh_action_lists(source_file):
-            public_actions = []
-            private_excluded = 0
-            for action in actions:
-                if not _is_public_phh_action(action):
-                    private_excluded += 1
-                    continue
-                sanitized = _sanitize_poker_action(action)
-                if not sanitized:
-                    continue
-                if re.match(r"^p\d+_sm_-?$", sanitized):
-                    sanitized = sanitized.replace("_-", "_hidden")
-                public_actions.append(sanitized)
-
-            if len(public_actions) < 2:
+            view_entries = poker_view_entries(actions, state_tokens)
+            if not view_entries:
                 continue
 
             parsed += 1
-            tokens = ["<bos>", "<poker>"] + state_tokens + public_actions + ["<eos>"]
-            metadata = {
-                "source": "phh",
-                "filename": os.path.basename(source_file),
-                "move_count": len(public_actions),
-                "private_actions_excluded": private_excluded,
-                "source_path": str(Path(source_file).resolve()),
-            }
-            yield tokens, metadata
+            for tokens, view_metadata in view_entries:
+                metadata = {
+                    **view_metadata,
+                    "source": "phh",
+                    "filename": os.path.basename(source_file),
+                    "source_path": str(Path(source_file).resolve()),
+                }
+                yield tokens, metadata
 
             if max_hands and parsed >= max_hands:
                 return

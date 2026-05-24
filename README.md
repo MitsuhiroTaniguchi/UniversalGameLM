@@ -85,3 +85,17 @@ Each dataset source should be labeled in downstream manifests:
 - `generated_or_curated`
 
 Do not merge source classes silently; training can weight them differently.
+
+## Poker Views
+
+Poker PHH ingestion emits one dataset row per view, matching the MahjongLM
+pattern where each row is one tokenized view of one game:
+
+- `view_complete`: public/recorded hand history only. Private `d dh` hole-card deals are excluded.
+- `view_imperfect_pN`: player `pN` perspective. It adds exactly that player's private cards to the complete public stream.
+- `view_omniscient`: complete stream plus all player private cards and a deterministic sampled full-deck completion.
+
+`view_omniscient` is a consistent completion of the observed hand history. Known
+cards from PHH are fixed; unknown private cards and the remaining deck are sampled
+without replacement using `uniform_unknown_cards_v1`, with `completion_seed`
+stored in metadata for reproducibility.
