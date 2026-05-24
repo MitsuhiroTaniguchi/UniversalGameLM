@@ -22,7 +22,7 @@ VOCAB_PATH = os.path.join(TOKENIZED_DIR, "vocab.json")
 MANIFEST_PATH = os.path.join(TOKENIZED_DIR, "manifest.json")
 
 DEFAULT_TARGET_TOKENS_PER_GAME = 3_000_000_000
-SPECIAL_TOKENS = ["<pad>", "<unk>", "<bos>", "<eos>", "<chess>", "<shogi>", "<go>", "<othello>", "<poker>"]
+SPECIAL_TOKENS = ["<pad>", "<unk>", "<bos>", "<eos>", "<chess>", "<shogi>", "<go>", "<othello>", "<poker>", "<bridge>"]
 
 def env_int(name, default):
     value = os.environ.get(name)
@@ -109,7 +109,7 @@ def build_manifest(stats_summary, target_tokens_per_game):
             "status": "ready" if item["token_deficit"] == 0 else "insufficient",
         }
 
-    missing_games = sorted(set(["chess", "shogi", "go", "othello", "poker"]) - set(games))
+    missing_games = sorted(set(["chess", "shogi", "go", "othello", "poker", "bridge"]) - set(games))
     for game in missing_games:
         games[game] = {
             "games": 0,

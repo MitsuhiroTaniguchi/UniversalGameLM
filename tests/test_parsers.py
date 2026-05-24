@@ -10,6 +10,7 @@ from src.go_parser import parse_sgf_to_tokens
 from src.othello_parser import parse_othello_pgn_to_tokens
 from src.poker_parser import PokerHandSimulator
 from src.poker_parser import parse_phh_to_tokens
+from src.bridge_parser import parse_pbn_to_tokens
 from src.tokenizer import UniversalGameTokenizer
 from src.download import safe_extract_zip
 from src.hf_uploader import HuggingFaceShardUploader
@@ -155,6 +156,37 @@ class TestUniversalGameParsers(unittest.TestCase):
         aces = simulator._score_key(simulator.get_best_hand(["Ah", "Ad"], board))
         self.assertGreater(aces, kings)
 
+    def test_bridge_pbn_parser(self):
+        mock_pbn = """[Event "World Championship"]
+[Site "Salsomaggiore"]
+[Date "2025.01.02"]
+[Board "1"]
+[Dealer "N"]
+[Vulnerable "None"]
+[Deal "N:AKQJ.543.2.98765 T987.2.AKQJ.T432 6543.AKQJ.43.AKQ 2.T9876.T98765.J"]
+[Auction "N"]
+1NT Pass 3NT Pass Pass Pass
+[Play "E"]
+HA HJ H6 H3
+"""
+        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".pbn") as f:
+            f.write(mock_pbn)
+            temp_path = f.name
+        try:
+            boards = list(parse_pbn_to_tokens(temp_path))
+            self.assertEqual(len(boards), 1)
+            tokens, meta = boards[0]
+            self.assertEqual(tokens[0], "<bos>")
+            self.assertEqual(tokens[1], "<bridge>")
+            self.assertEqual(tokens[2], "view_complete")
+            self.assertIn("dealer:N", tokens)
+            self.assertIn("bid:1N", tokens)
+            self.assertIn("play:HA", tokens)
+            self.assertEqual(meta["seat_count"], 4)
+            validate_entry({"game": "bridge", "tokens": tokens, "metadata": meta})
+        finally:
+            os.remove(temp_path)
+
     def test_tokenizer_encoding(self):
         special_tokens = ["<pad>", "<unk>", "<bos>", "<eos>", "<chess>", "<shogi>", "<go>", "<othello>", "<poker>"]
         tokenizer = UniversalGameTokenizer(special_tokens=special_tokens)
@@ -287,12 +319,17 @@ class TestUniversalGameParsers(unittest.TestCase):
             with open(poker_path, "w", encoding="utf-8") as f:
                 f.write('''actions = ["deal_hole P1 AhAd", "post_blind P1 50", "post_blind P2 100", "call P1", "check P2", "deal_board 2c3d4h", "bet P2 200", "fold P1"]\n''')
 
+            bridge_path = os.path.join(temp_dir, "sample.pbn")
+            with open(bridge_path, "w", encoding="utf-8") as f:
+                f.write("""[Event "Bridge"]\n[Date "2025.01.02"]\n[Dealer "N"]\n[Vulnerable "None"]\n[Deal "N:AKQJ.543.2.98765 T987.2.AKQJ.T432 6543.AKQJ.43.AKQ 2.T9876.T98765.J"]\n[Auction "N"]\n1NT Pass 3NT Pass Pass Pass\n[Play "E"]\nHA HJ H6 H3\n""")
+
             cases = {
                 "chess": [chess_path],
                 "shogi": [shogi_dir],
                 "go": [go_dir],
                 "othello": [othello_path],
                 "poker": [poker_path],
+                "bridge": [bridge_path],
             }
             for game, paths in cases.items():
                 out_dir = os.path.join(temp_dir, "out", game)
@@ -470,7 +507,7 @@ actions = [
             os.makedirs(tokenizer_dir)
             vocab_tokens = [
                 "<pad>", "<unk>", "<bos>", "<eos>", "rule_riichi", "view_complete",
-                "rule_chess", "e2e4", "e7e5", "g1f3", "b8c6", "f1b5", "a7a6", "b5a4",
+                "rule_chess", "rule_bridge", "e2e4", "e7e5", "g1f3", "b8c6", "f1b5", "a7a6", "b5a4",
             ]
             with open(os.path.join(tokenizer_dir, "vocab.txt"), "w", encoding="utf-8") as f:
                 f.write("\n".join(vocab_tokens) + "\n")

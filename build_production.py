@@ -14,7 +14,7 @@ from src.tokenizer import UniversalGameTokenizer
 
 def main():
     parser = argparse.ArgumentParser(description="Build production token shards for UniversalGameLM.")
-    parser.add_argument("--game", required=True, choices=["chess", "shogi", "go", "othello", "poker"])
+    parser.add_argument("--game", required=True, choices=["chess", "shogi", "go", "othello", "poker", "bridge"])
     parser.add_argument("--input", action="append", required=True, help="Input file or directory. Repeat for multiple sources.")
     parser.add_argument("--output-dir", default="production_shards")
     parser.add_argument("--target-tokens", type=int, default=DEFAULT_TARGET_TOKENS)

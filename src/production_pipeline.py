@@ -16,13 +16,14 @@ from src.othello_parser import (
     validate_othello_moves,
 )
 from src.poker_parser import parse_phh_to_tokens
+from src.bridge_parser import parse_bridge_inputs
 from src.hf_uploader import HuggingFaceShardUploader
 from src.mahjonglm_compat import entry_to_mahjonglm_row, entry_to_mahjonglm_row_tokens
 from src.stats import DatasetStatsAccumulator
 from src.tokenizer import UniversalGameTokenizer
 
 
-GAME_ORDER = ("chess", "shogi", "go", "othello", "poker")
+GAME_ORDER = ("chess", "shogi", "go", "othello", "poker", "bridge")
 DEFAULT_TARGET_TOKENS = 3_000_000_000
 PRIVATE_POKER_TOKEN_PATTERNS = (
     re.compile(r"^h:", re.IGNORECASE),
@@ -78,6 +79,8 @@ def iter_game_entries(game, input_paths, max_records=None):
                 iterator = parse_othello_pgn_to_tokens(str(path), max_games=max_records)
         elif game == "poker":
             iterator = parse_phh_to_tokens(str(path), max_hands=max_records)
+        elif game == "bridge":
+            iterator = parse_bridge_inputs(str(path), max_games=max_records)
         else:
             raise ValueError(f"Unsupported game: {game}")
 
@@ -170,6 +173,37 @@ def validate_entry(entry):
                 raise ProductionDatasetError("Poker omniscient view is missing sampled deck token")
         else:
             raise ProductionDatasetError(f"Unknown poker view token: {tokens[2]}")
+    if game == "bridge":
+        if tokens[2] != "view_complete":
+            raise ProductionDatasetError("Bridge currently supports only complete views")
+        hand_tokens = [token for token in tokens if token.startswith("hand:")]
+        if len(hand_tokens) != 4:
+            raise ProductionDatasetError("Bridge entry must contain four hand tokens")
+        cards = []
+        for token in hand_tokens:
+            cards_text = token.split(":", 2)[2]
+            if len(cards_text) != 26:
+                raise ProductionDatasetError(f"Bridge hand token has wrong length: {token}")
+            cards.extend(cards_text[i:i + 2] for i in range(0, len(cards_text), 2))
+        if len(cards) != 52 or len(set(cards)) != 52:
+            raise ProductionDatasetError("Bridge entry must contain 52 unique dealt cards")
+        for card in cards:
+            if not re.fullmatch(r"[SHDC][AKQJT98765432]", card):
+                raise ProductionDatasetError(f"Invalid bridge card: {card}")
+        for token in tokens[3:-1]:
+            if token.startswith(("dealer:", "vul:", "contract:", "declarer:", "hand:")):
+                continue
+            if token.startswith("bid:"):
+                call = token.split(":", 1)[1]
+                if not re.fullmatch(r"(?:PASS|X|XX|[1-7][CDHSN])", call):
+                    raise ProductionDatasetError(f"Invalid bridge bid token: {token}")
+                continue
+            if token.startswith("play:"):
+                card = token.split(":", 1)[1]
+                if not re.fullmatch(r"[SHDC][AKQJT98765432]", card):
+                    raise ProductionDatasetError(f"Invalid bridge play token: {token}")
+                continue
+            raise ProductionDatasetError(f"Invalid bridge token: {token}")
 
 
 def row_token_count(row):

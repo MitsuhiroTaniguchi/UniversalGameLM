@@ -73,6 +73,26 @@
         "priority": 1,
         "notes": "Use public actions only; do not leak private hole cards before decisions."
       }
+    ],
+    "bridge": [
+      {
+        "name": "Vugraph Project / ComputerBridge PBN finals",
+        "source_class": "human_top",
+        "license": "verify event and archive redistribution terms before mirroring raw records",
+        "url": "https://www.computerbridge.se/finals-world-championship-in-pbn/",
+        "format": "pbn",
+        "priority": 1,
+        "notes": "World Championship, NABC, Bermuda Bowl, Venice Cup, Vanderbilt and other high-level PBN files. Highest-quality seed, but unlikely to reach 3B tokens alone."
+      },
+      {
+        "name": "BBO/Vugraph public archives",
+        "source_class": "human_public",
+        "license": "verify BBO/Vugraph terms before bulk redistribution",
+        "url": "https://www.bridgebase.com/vugraph/",
+        "format": "lin/pbn",
+        "priority": 2,
+        "notes": "Largest practical source of expert and public tournament bridge records; convert LIN to PBN before ingestion. Use event filters for top-level play."
+      }
     ]
   }
 }

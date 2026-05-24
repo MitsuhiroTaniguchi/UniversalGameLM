@@ -85,6 +85,7 @@ Supported production input forms include:
 - Go: `.sgf`, `.sgf.gz`, or directories containing those files
 - Othello: PGN/WTHOR text, local JSONL rows with `moves`/`games`/`seqs`, or `hf://dataset_id[:split]`
 - poker: `.phh`, `.phhs`, or directories containing those files
+- bridge: `.pbn` files or directories containing `.pbn`
 
 Run tests before any production job:
 
@@ -124,3 +125,12 @@ Poker rows also carry MahjongLM-style `seat_count` metadata. A hand with `N`
 players emits `N + 2` rows: one complete view, `N` imperfect views, and one
 omniscient view. Production stats report `by_seat_count` buckets so two-player,
 six-player, and larger table corpora can be balanced explicitly.
+
+## Bridge
+
+Contract bridge ingestion supports PBN records with `Deal`, `Auction`, and
+optional `Play` sections. Bridge rows currently use `view_complete` only and
+carry `seat_count=4`. The source plan prioritizes top-level World Championship,
+NABC, Bermuda Bowl, Venice Cup, Vanderbilt, and BBO/Vugraph archives; the curated
+top-event PBN sources are high quality but may need large public Vugraph archive
+supplementation to reach the 3B-token target.

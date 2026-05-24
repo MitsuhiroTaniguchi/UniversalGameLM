@@ -8,6 +8,7 @@ GAME_RULE_TOKENS = {
     "go": "rule_go",
     "othello": "rule_othello",
     "poker": "rule_poker",
+    "bridge": "rule_bridge",
 }
 
 DEFAULT_SEAT_COUNTS = {
@@ -15,6 +16,7 @@ DEFAULT_SEAT_COUNTS = {
     "shogi": 2,
     "go": 2,
     "othello": 2,
+    "bridge": 4,
 }
 
 
