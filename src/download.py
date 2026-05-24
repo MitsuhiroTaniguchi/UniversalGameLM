@@ -58,6 +58,29 @@ def download_file(url, save_path):
             os.remove(save_path)
         return False
 
+def safe_extract_zip(zip_path, destination_dir, allowed_suffixes=None):
+    """Extracts a zip archive without allowing members to escape destination_dir."""
+    destination_real = os.path.realpath(destination_dir)
+    extracted = []
+
+    with zipfile.ZipFile(zip_path, "r") as zip_ref:
+        for member in zip_ref.infolist():
+            if member.is_dir():
+                continue
+
+            filename = member.filename
+            if allowed_suffixes and not filename.lower().endswith(allowed_suffixes):
+                continue
+
+            target_path = os.path.realpath(os.path.join(destination_dir, filename))
+            if not target_path.startswith(destination_real + os.sep):
+                raise ValueError(f"Unsafe zip member path: {filename}")
+
+            zip_ref.extract(member, destination_dir)
+            extracted.append(target_path)
+
+    return extracted
+
 def download_chess_pgn(player_name="Carlsen"):
     """Downloads PGN file (via ZIP) for a specific elite player from PGN Mentor."""
     pgn_path = os.path.join(CHESS_DATA_DIR, f"{player_name}.pgn")
@@ -72,8 +95,9 @@ def download_chess_pgn(player_name="Carlsen"):
     if download_file(url, zip_path):
         try:
             print(f"  [Extracting] {zip_path} -> {CHESS_DATA_DIR}")
-            with zipfile.ZipFile(zip_path, "r") as zip_ref:
-                zip_ref.extractall(CHESS_DATA_DIR)
+            extracted = safe_extract_zip(zip_path, CHESS_DATA_DIR, allowed_suffixes=(".pgn",))
+            if not extracted:
+                raise ValueError("Archive did not contain any PGN files")
             print("  [Success] PGN extracted successfully.")
             # Remove zip file to clean up
             os.remove(zip_path)
@@ -133,11 +157,12 @@ def download_go_sgf(max_games=100):
     
     base_url = "http://homepages.cwi.nl/~aeb/go/games/games/AlphaGo/"
     
-    # We will fetch specific matches: Fan Hui (5 games), Lee Sedol (5 games), NewYear2017 (up to 90 games)
+    # We will fetch specific matches: Fan Hui (5 games), Lee Sedol (5 games),
+    # and the available NewYear2017 numbered files.
     categories = {
         "FanHui": [f"FanHui/{i}.sgf" for i in range(1, 6)],
         "LeeSedol": [f"LeeSedol/{i}.sgf" for i in range(1, 6)],
-        "NewYear2017": [f"NewYear2017/T{str(i).zfill(2)}.sgf" for i in range(1, 61)]
+        "NewYear2017": [f"NewYear2017/T{str(i).zfill(2)}.sgf" for i in range(1, 31)]
     }
     
     downloaded_count = 0

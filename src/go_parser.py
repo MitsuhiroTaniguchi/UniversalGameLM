@@ -9,6 +9,13 @@ def get_sgf_property(node, name, default="Unknown"):
     except KeyError:
         return default
 
+def coords_to_token(coords, board_size):
+    """Converts sgfmill row/col coordinates back to SGF-style two-letter tokens."""
+    row, col = coords
+    col_letter = chr(ord('a') + col)
+    row_letter = chr(ord('a') + (board_size - 1 - row))
+    return f"{col_letter}{row_letter}"
+
 def parse_sgf_to_tokens(sgf_path):
     """
     Parses a Go SGF file using sgfmill and returns the token sequence and metadata.
@@ -25,33 +32,43 @@ def parse_sgf_to_tokens(sgf_path):
         game = sgfmill.sgf.Sgf_game.from_string(sgf_content)
         root = game.get_root()
 
-        # Extract moves
-        usi_moves = []
+        board_size = root.get_size()
+        if board_size < 1 or board_size > 26:
+            raise ValueError(f"Unsupported Go board size for tokenization: {board_size}")
+
+        # Extract setup stones before moves. Without these, handicap/setup SGFs
+        # become ambiguous or illegal when reconstructed from tokens.
+        setup_tokens = []
+        if root.has_setup_stones():
+            black_stones, white_stones, empty_points = root.get_setup_stones()
+            setup_tokens.extend(f"AB:{coords_to_token(c, board_size)}" for c in sorted(black_stones))
+            setup_tokens.extend(f"AW:{coords_to_token(c, board_size)}" for c in sorted(white_stones))
+            setup_tokens.extend(f"AE:{coords_to_token(c, board_size)}" for c in sorted(empty_points))
+
+        moves = []
         for node in game.get_main_sequence():
             move = node.get_move()
             if move is not None and move[0] is not None:
                 color, coords = move
                 if coords is None:
-                    usi_moves.append("pass")
+                    moves.append(f"{color}:pass")
                 else:
-                    row, col = coords
-                    # Map bottom-left coords to top-left letter coordinates (0 -> a, 1 -> b, etc.)
-                    col_letter = chr(ord('a') + col)
-                    row_letter = chr(ord('a') + (18 - row))
-                    usi_moves.append(f"{col_letter}{row_letter}")
+                    moves.append(f"{color}:{coords_to_token(coords, board_size)}")
 
         # Quality Filter: Skip empty or extremely short games
-        if len(usi_moves) < 10:
+        if len(moves) < 10:
             return None, None
 
-        tokens = ["<bos>", "<go>"] + usi_moves + ["<eos>"]
+        tokens = ["<bos>", "<go>", f"SZ:{board_size}"] + setup_tokens + moves + ["<eos>"]
 
         metadata = {
             "black": get_sgf_property(root, "PB", "Unknown"),
             "white": get_sgf_property(root, "PW", "Unknown"),
             "result": get_sgf_property(root, "RE", "*"),
             "date": get_sgf_property(root, "DT", "????-??-??"),
-            "move_count": len(usi_moves),
+            "board_size": board_size,
+            "setup_count": len(setup_tokens),
+            "move_count": len(moves),
             "filename": os.path.basename(sgf_path)
         }
 

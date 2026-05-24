@@ -1,6 +1,7 @@
 import os
 import random
 import collections
+import re
 
 # Card representation: Values 2-A, Suits h, d, c, s
 VALUES = "23456789TJQKA"
@@ -105,6 +106,23 @@ class PokerHandSimulator:
         # For simplicity in this emulator, we evaluate the 7-card pool directly
         return self._eval_hand(all_cards)
 
+    def _score_key(self, score):
+        """Normalizes hand scores so same-class hands compare by kickers too."""
+        rank, tie_breakers = score
+        if isinstance(tie_breakers, int):
+            tie_breakers = (tie_breakers,)
+        elif isinstance(tie_breakers, list):
+            tie_breakers = tuple(tie_breakers)
+        else:
+            flattened = []
+            for value in tie_breakers:
+                if isinstance(value, list):
+                    flattened.extend(value)
+                else:
+                    flattened.append(value)
+            tie_breakers = tuple(flattened)
+        return (rank, *tie_breakers)
+
     def simulate_hand(self):
         """Simulates one No-Limit Hold'em hand and yields tokens."""
         # Shuffle deck
@@ -119,11 +137,8 @@ class PokerHandSimulator:
         # State tokens list
         tokens = ["<bos>", "<poker>"]
         
-        # Record pocket cards for all players
-        for s in range(1, self.num_seats + 1):
-            tokens.append(f"H:{s}:{hands[s][0]}{hands[s][1]}")
-            
-        # 2. Blinds Posting
+        # 2. Blinds Posting. Hole cards are intentionally not emitted here:
+        # pre-showdown action tokens must not leak hidden information.
         sb_amt, bb_amt = 10, 20
         tokens.append(f"SB:{sb_amt}")
         tokens.append(f"BB:{bb_amt}")
@@ -195,11 +210,12 @@ class PokerHandSimulator:
             winner = active_players[0]
         else:
             # Evaluate hands
-            best_score = -1
+            best_score = None
             for s in active_players:
-                score = self.get_best_hand(hands[s], flop + turn + river)
-                if score[0] > best_score:
-                    best_score = score[0]
+                tokens.append(f"SHOW:{s}:{hands[s][0]}{hands[s][1]}")
+                score = self._score_key(self.get_best_hand(hands[s], flop + turn + river))
+                if best_score is None or score > best_score:
+                    best_score = score
                     winner = s
                     
         tokens.append(f"WINNER:{winner}")
@@ -211,7 +227,8 @@ class PokerHandSimulator:
             "turn": turn[0],
             "river": river[0],
             "winner": f"Player {winner}",
-            "move_count": len(tokens) - 4 # excluding special tokens and hole cards
+            "source": "synthetic_simulator",
+            "move_count": len(tokens) - 3 # excluding bos/eos/game token
         }
         
         return tokens, metadata
@@ -225,6 +242,58 @@ def generate_poker_dataset(n_hands=100):
     for _ in range(n_hands):
         yield simulator.simulate_hand()
     print(f"[Success] Generated {n_hands} simulated Poker hands.")
+
+def _sanitize_poker_action(action):
+    return re.sub(r"\s+", "_", action.strip().lower())
+
+def _is_public_phh_action(action):
+    normalized = action.strip().lower()
+    private_prefixes = (
+        "deal_hole",
+        "dh ",
+        "hole",
+        "show_or_muck_hole_cards",
+    )
+    return not normalized.startswith(private_prefixes)
+
+def parse_phh_to_tokens(phh_path, max_hands=None):
+    """
+    Parses a simple PHH/PHHS file and yields public action tokens.
+
+    PHH is TOML-like. For safety, private hole-card deal actions are excluded
+    because they would leak hidden information before player decisions.
+    """
+    if not os.path.exists(phh_path):
+        print(f"[Error] PHH file not found: {phh_path}")
+        return
+
+    with open(phh_path, "r", encoding="utf-8", errors="ignore") as f:
+        content = f.read()
+
+    # Supports one PHH document or multiple documents separated by blank-table starts.
+    blocks = re.split(r"\n(?=\s*\[\[?hand)", content)
+    if len(blocks) == 1:
+        blocks = [content]
+
+    parsed = 0
+    for block in blocks:
+        actions = re.findall(r'"([^"]+)"', block)
+        public_actions = [_sanitize_poker_action(a) for a in actions if _is_public_phh_action(a)]
+        if len(public_actions) < 2:
+            continue
+
+        parsed += 1
+        tokens = ["<bos>", "<poker>"] + public_actions + ["<eos>"]
+        metadata = {
+            "source": "phh",
+            "filename": os.path.basename(phh_path),
+            "move_count": len(public_actions),
+            "private_actions_excluded": len(actions) - len(public_actions),
+        }
+        yield tokens, metadata
+
+        if max_hands and parsed >= max_hands:
+            break
 
 if __name__ == "__main__":
     # Test simulator
