@@ -72,23 +72,22 @@ def apply_move(board, color, move):
 def validate_othello_moves(moves, require_terminal=True):
     board = _initial_board()
     color = "B"
-    consecutive_passes = 0
     canonical_moves = []
     for index, move in enumerate(moves):
         canonical = PASS_TOKEN if move in ("pa", "pass") else move
 
-        if canonical != PASS_TOKEN and not legal_moves(board, color):
+        current_legal = legal_moves(board, color)
+        if canonical != PASS_TOKEN and not current_legal:
             canonical_moves.append(PASS_TOKEN)
-            consecutive_passes += 1
             color = "W" if color == "B" else "B"
-            if consecutive_passes >= 2:
+            current_legal = legal_moves(board, color)
+            if not current_legal:
                 raise ValueError("Moves after double pass are not allowed")
 
         apply_move(board, color, canonical)
         canonical_moves.append(canonical)
-        consecutive_passes = consecutive_passes + 1 if canonical == PASS_TOKEN else 0
         color = "W" if color == "B" else "B"
-        if consecutive_passes >= 2:
+        if len(canonical_moves) >= 2 and canonical_moves[-2:] == [PASS_TOKEN, PASS_TOKEN]:
             remaining = moves[index + 1 :]
             if remaining:
                 raise ValueError("Moves after double pass are not allowed")
@@ -255,6 +254,9 @@ def parse_othello_hf_dataset(dataset_id, split="train", max_games=None):
             "split": split,
             "row": row_number,
             "move_count": len(tokens) - 3,
+            "seat_count": 2,
+            "view_type": "complete",
+            "viewer_seat": None,
         }
         if max_games and parsed >= max_games:
             break

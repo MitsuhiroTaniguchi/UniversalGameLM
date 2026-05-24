@@ -406,7 +406,7 @@ def build_game_shards(
                 stats_entry = {**entry, "tokens": entry_to_mahjonglm_row_tokens(entry)}
             completed = writer.write(entry, starts_new_view_group=starts_new_view_group)
             stats.update(stats_entry)
-            total_tokens += row_token_count(row_transform(entry) if row_transform else entry)
+            total_tokens += row_token_count(stats_entry)
             total_rows += 1
 
             if completed and uploader:

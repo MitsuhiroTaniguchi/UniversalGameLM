@@ -23,6 +23,7 @@ from src.production_pipeline import (
     ProductionDatasetError,
 )
 from src.stats import DatasetStatsAccumulator
+from src.stats import is_counted_move_token
 from src.mahjonglm_compat import entry_to_mahjonglm_row, tokens_to_mahjonglm_stream
 
 TERMINAL_OTHELLO_MOVES = [
@@ -379,6 +380,17 @@ HA H2 H7 H3
             self.assertNotIn(tokenizer.vocab["<bos>"], row["input_ids"])
             self.assertNotIn(tokenizer.vocab["<eos>"], row["input_ids"])
 
+    def test_mahjonglm_metadata_defaults_poker_seat_count(self):
+        row = {
+            "game": "poker",
+            "tokens": ["<bos>", "<poker>", "view_complete", "act:fold", "<eos>"],
+            "metadata": {},
+        }
+        stream = tokens_to_mahjonglm_stream(row)
+        self.assertEqual(stream[:2], ["rule_poker", "view_complete"])
+        from src.mahjonglm_compat import normalize_mahjonglm_metadata
+        self.assertEqual(normalize_mahjonglm_metadata(row)["seat_count"], 2)
+
     def test_mahjonglm_tokenizer_rejects_sparse_or_duplicate_ids(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             sparse_dir = os.path.join(temp_dir, "sparse")
@@ -637,8 +649,10 @@ actions = [
             self.assertIn("view_complete", complete_tokens)
             self.assertIn("VARIANT:nt", complete_tokens)
             self.assertIn("STARTING_STACKS:BEGIN", complete_tokens)
-            self.assertIn("act:cc", complete_tokens)
-            self.assertIn("act:cbr", complete_tokens)
+            self.assertIn("act:call", complete_tokens)
+            self.assertIn("act:raise", complete_tokens)
+            self.assertNotIn("act:cc", complete_tokens)
+            self.assertNotIn("act:cbr", complete_tokens)
             self.assertIn("AMT:3", complete_tokens)
             self.assertIn("act:hidden", complete_tokens)
             self.assertFalse(any("AhAd" in token or "KcKd" in token for token in complete_tokens))
@@ -689,6 +703,14 @@ actions = [
             self.assertEqual(summary["views"], {"complete": 1, "imperfect": 6, "omniscient": 1})
         finally:
             os.remove(temp_path)
+
+    def test_stats_excludes_context_tokens_from_move_counts(self):
+        self.assertFalse(is_counted_move_token("TURN:black"))
+        self.assertFalse(is_counted_move_token("SZ:19"))
+        self.assertFalse(is_counted_move_token("KM:6.5"))
+        self.assertFalse(is_counted_move_token("dealer:N"))
+        self.assertTrue(is_counted_move_token("7g7f"))
+        self.assertTrue(is_counted_move_token("act:raise"))
 
     def test_bridge_auction_allows_pass_before_redouble(self):
         mock_pbn = """[Event "Redouble"]

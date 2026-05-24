@@ -423,6 +423,11 @@ def _public_action_tokens(action):
     while index < len(parts):
         part = parts[index]
         part = {
+            "cc": "call",
+            "cbr": "raise",
+            "br": "raise",
+            "f": "fold",
+            "sm": "show",
             "calls": "call",
             "checks": "check",
             "folds": "fold",

@@ -1,5 +1,23 @@
 import collections
 
+NON_MOVE_PREFIXES = (
+    "VARIANT:", "FEN:",
+    "SETUP:", "TURN:", "END:",
+    "SZ:", "KM:", "RU:", "HA:", "AB:", "AW:", "AE:",
+    "view_", "rule_",
+    "dealer:", "vul:", "contract:", "declarer:", "play_leader:", "trump:",
+    "hand:", "private_card:", "undealt_card:",
+    "STARTING_STACKS:", "BLINDS_OR_STRADDLES:", "ANTES:", "MIN_BET:",
+    "NUM:",
+)
+
+
+def is_counted_move_token(token):
+    if token.startswith("<") and token.endswith(">"):
+        return False
+    return not token.startswith(NON_MOVE_PREFIXES)
+
+
 class DatasetStatsAccumulator:
     """Tracks dataset statistics without retaining every serialized row."""
     def __init__(self):
@@ -20,7 +38,7 @@ class DatasetStatsAccumulator:
         self.token_counts[game] += len(tokens)
         self.length_counts[game][len(tokens)] += 1
 
-        moves = [t for t in tokens if not (t.startswith("<") and t.endswith(">"))]
+        moves = [t for t in tokens if is_counted_move_token(t)]
         self.non_special_token_counts[game] += len(moves)
         self.move_counts[game].update(moves)
         seat_count = metadata.get("seat_count")
