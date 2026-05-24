@@ -16,7 +16,6 @@ DEFAULT_SEAT_COUNTS = {
     "shogi": 2,
     "go": 2,
     "othello": 2,
-    "poker": 2,
     "bridge": 4,
 }
 

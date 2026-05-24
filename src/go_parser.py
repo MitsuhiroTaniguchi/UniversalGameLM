@@ -8,9 +8,10 @@ import sgfmill.boards
 def get_sgf_property(node, name, default="Unknown"):
     """Helper to safely extract SGF properties without raising KeyError."""
     try:
-        return node.get(name) or default
+        value = node.get(name)
     except KeyError:
         return default
+    return default if value is None else value
 
 def coords_to_token(coords, board_size):
     """Converts sgfmill row/col coordinates back to SGF-style two-letter tokens."""

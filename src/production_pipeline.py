@@ -64,32 +64,41 @@ def source_id_for_path(path):
 
 def iter_game_entries(game, input_paths, max_records=None):
     emitted = 0
+    emitted_groups = 0
+    grouped_views = game in {"poker", "bridge"}
     for input_path in input_paths:
+        if max_records and (emitted_groups if grouped_views else emitted) >= max_records:
+            return
+        remaining = None
+        if max_records:
+            remaining = max_records - (emitted_groups if grouped_views else emitted)
         path = Path(input_path)
         if game == "chess":
-            iterator = parse_chess_inputs(str(path), max_games=max_records)
+            iterator = parse_chess_inputs(str(path), max_games=remaining)
         elif game == "shogi":
-            iterator = parse_shogi_directory(str(path), max_games=max_records)
+            iterator = parse_shogi_directory(str(path), max_games=remaining)
         elif game == "go":
-            iterator = parse_go_directory(str(path), max_games=max_records)
+            iterator = parse_go_directory(str(path), max_games=remaining)
         elif game == "othello":
             input_text = str(input_path)
             if input_text.startswith("hf://"):
                 dataset_spec = input_text.removeprefix("hf://")
                 dataset_id, _, split = dataset_spec.partition(":")
-                iterator = parse_othello_hf_dataset(dataset_id, split=split or "train", max_games=max_records)
+                iterator = parse_othello_hf_dataset(dataset_id, split=split or "train", max_games=remaining)
             else:
-                iterator = parse_othello_inputs(str(path), max_games=max_records)
+                iterator = parse_othello_inputs(str(path), max_games=remaining)
         elif game == "poker":
-            iterator = parse_phh_to_tokens(str(path), max_hands=max_records)
+            iterator = parse_phh_to_tokens(str(path), max_hands=remaining)
         elif game == "bridge":
-            iterator = parse_bridge_inputs(str(path), max_games=max_records)
+            iterator = parse_bridge_inputs(str(path), max_games=remaining)
         else:
             raise ValueError(f"Unsupported game: {game}")
 
         for tokens, metadata in iterator:
             actual_source = metadata.get("source_path") or str(input_path)
             emitted += 1
+            if grouped_views and (metadata.get("view_type") == "complete" or not metadata.get("view_type")):
+                emitted_groups += 1
             yield {
                 "game": game,
                 "tokens": tokens,
@@ -100,7 +109,7 @@ def iter_game_entries(game, input_paths, max_records=None):
                     "ingestion_version": 2,
                 },
             }
-            if max_records and emitted >= max_records and game not in {"poker", "bridge"}:
+            if max_records and not grouped_views and emitted >= max_records:
                 return
 
 

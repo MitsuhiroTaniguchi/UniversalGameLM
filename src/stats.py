@@ -7,6 +7,7 @@ NON_MOVE_PREFIXES = (
     "view_", "rule_",
     "dealer:", "vul:", "contract:", "declarer:", "play_leader:", "trump:",
     "hand:", "private_card:", "undealt_card:",
+    "seat:", "card:", "showdown:", "winner:",
     "STARTING_STACKS:", "BLINDS_OR_STRADDLES:", "ANTES:", "MIN_BET:",
     "ANTE_TRIMMING_STATUS:", "BETTING_TYPE:",
     "NUM:", "AMT:",

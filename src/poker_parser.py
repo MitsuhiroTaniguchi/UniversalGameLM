@@ -75,7 +75,7 @@ class PokerHandSimulator:
             
         # Group duplicates
         counts = collections.Counter(vals)
-        most_common = counts.most_common()
+        most_common = sorted(counts.items(), key=lambda item: (item[1], item[0]), reverse=True)
         
         # Four of a Kind
         if most_common[0][1] == 4:
@@ -128,6 +128,22 @@ class PokerHandSimulator:
             tie_breakers = tuple(flattened)
         return (rank, *tie_breakers)
 
+    def _postflop_betting_round(self, active_players, should_bet, bet_amount, response_amount=None):
+        order = list(active_players)
+        bettor = next((seat for seat in order if should_bet(seat)), None)
+        if bettor is None:
+            return [token for seat in order for token in (f"seat:p{seat}", "act:check")]
+
+        tokens = []
+        bettor_index = order.index(bettor)
+        for seat in order[:bettor_index]:
+            tokens.extend([f"seat:p{seat}", "act:check"])
+        tokens.extend([f"seat:p{bettor}", "act:bet"] + _number_digit_tokens("AMT", bet_amount))
+        call_amount = response_amount if response_amount is not None else bet_amount
+        for seat in order[bettor_index + 1:] + order[:bettor_index]:
+            tokens.extend([f"seat:p{seat}", "act:call"] + _number_digit_tokens("AMT", call_amount))
+        return tokens
+
     def simulate_hand(self):
         """Simulates one No-Limit Hold'em hand and yields tokens."""
         # Shuffle deck
@@ -158,8 +174,8 @@ class PokerHandSimulator:
         
         # Pre-flop betting
         # Seats 1-6 profiles: 1 is SB, 2 is BB, 3 is UTG, 4 is HJ, 5 is CO, 6 is BTN
-        # Simulated preflop actions
-        for s in [3, 4, 5, 6, 1, 2]:
+        preflop_order = [seat for seat in list(range(3, self.num_seats + 1)) + [1, 2] if seat in active_players]
+        for s in preflop_order:
             if s not in active_players:
                 continue
             card1_val = hands[s][0][0]
@@ -169,10 +185,10 @@ class PokerHandSimulator:
             is_strong = any(v in "AKQJT" for v in [card1_val, card2_val])
             is_pair = (card1_val == card2_val)
             
-            if is_strong or is_pair:
-                action_tokens = ["act:call"]
-                if is_pair and card1_val in "AKQJ":
-                    action_tokens = ["act:raise"] + _number_digit_tokens("AMT", 60)
+            if s == 2:
+                action_tokens = ["act:check"]
+            elif is_strong or is_pair:
+                action_tokens = ["act:call"] + _number_digit_tokens("AMT", bb_amt)
             else:
                 action_tokens = ["act:fold"]
                 active_players.remove(s)
@@ -182,15 +198,12 @@ class PokerHandSimulator:
         # Flop betting round (if at least 2 active players left)
         if len(active_players) >= 2:
             tokens.extend(["act:flop"] + [f"card:{card}" for card in flop])
-            # Simulate check/bet
-            for s in list(active_players):
-                # Simple flop decisions
-                has_pair = hands[s][0][0] in [c[0] for c in flop] or hands[s][1][0] in [c[0] for c in flop]
-                if has_pair:
-                    action_tokens = ["act:bet"] + _number_digit_tokens("AMT", 40)
-                else:
-                    action_tokens = ["act:check"]
-                tokens.extend([f"seat:p{s}"] + action_tokens)
+            flop_ranks = {card[0] for card in flop}
+            tokens.extend(self._postflop_betting_round(
+                active_players,
+                lambda seat: hands[seat][0][0] in flop_ranks or hands[seat][1][0] in flop_ranks,
+                40,
+            ))
                 
         # Turn betting round
         if len(active_players) >= 2:
@@ -201,13 +214,8 @@ class PokerHandSimulator:
         # River betting round
         if len(active_players) >= 2:
             tokens.extend(["act:river", f"card:{river[0]}"])
-            # Final river decisions: aggressive bet from BTN or SB
-            for s in list(active_players):
-                if s == active_players[-1]:
-                    action_tokens = ["act:bet"] + _number_digit_tokens("AMT", 100)
-                else:
-                    action_tokens = ["act:call"]
-                tokens.extend([f"seat:p{s}"] + action_tokens)
+            river_bettor = active_players[0]
+            tokens.extend(self._postflop_betting_round(active_players, lambda seat: seat == river_bettor, 100))
                 
         # Showdown & Determine Winner
         winner = None

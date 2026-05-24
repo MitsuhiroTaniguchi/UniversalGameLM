@@ -124,6 +124,25 @@ class TestUniversalGameParsers(unittest.TestCase):
         finally:
             os.remove(temp_path)
 
+    def test_go_parser_preserves_zero_komi_and_handicap(self):
+        mock_sgf = "(;SZ[19]KM[0]HA[0];B[pd];W[dd];B[pp];W[dp];B[cf];W[ch];B[fd];W[df];B[dg];W[cg])"
+        with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
+            f.write(mock_sgf)
+            temp_path = f.name
+        try:
+            tokens, meta = parse_sgf_to_tokens(temp_path)
+            self.assertIn("KM:0.0", tokens)
+            self.assertIn("HA:0", tokens)
+            self.assertEqual(meta["komi"], 0.0)
+            self.assertEqual(meta["handicap"], 0)
+        finally:
+            os.remove(temp_path)
+
+    def test_default_tokenizer_includes_all_game_markers(self):
+        tokenizer = UniversalGameTokenizer()
+        for marker in ("<chess>", "<shogi>", "<go>", "<othello>", "<poker>", "<bridge>"):
+            self.assertIn(marker, tokenizer.vocab)
+
     def test_go_parser_rejects_variations(self):
         mock_sgf = "(;SZ[19];B[pd](;W[dd];B[pp];W[dp];B[cf];W[ch];B[fd];W[df];B[dg];W[cg])(;W[qq]))"
         with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
@@ -196,6 +215,18 @@ class TestUniversalGameParsers(unittest.TestCase):
         self.assertIsNotNone(meta["winner"])
         validate_entry({"game": "poker", "tokens": tokens, "metadata": meta})
         self.assertEqual(meta["source"], "synthetic_simulator")
+        street_has_bet = False
+        in_postflop_street = False
+        for token in tokens:
+            if token in {"act:preflop", "act:flop", "act:turn", "act:river"}:
+                in_postflop_street = token != "act:preflop"
+                street_has_bet = False
+            elif token in {"act:bet", "act:raise", "act:post_big_blind"}:
+                street_has_bet = True
+            elif in_postflop_street and token == "act:call":
+                self.assertTrue(street_has_bet)
+            elif in_postflop_street and token == "act:check":
+                self.assertFalse(street_has_bet)
 
     def test_poker_score_compares_tie_breakers(self):
         simulator = PokerHandSimulator()
@@ -203,6 +234,11 @@ class TestUniversalGameParsers(unittest.TestCase):
         kings = simulator._score_key(simulator.get_best_hand(["Kh", "Kd"], board))
         aces = simulator._score_key(simulator.get_best_hand(["Ah", "Ad"], board))
         self.assertGreater(aces, kings)
+
+    def test_poker_score_sorts_equal_multiplicities_by_rank(self):
+        simulator = PokerHandSimulator()
+        score = simulator._score_key(simulator._eval_hand(["Kh", "Kd", "Ks", "5c", "5d", "5h", "2s"]))
+        self.assertEqual(score, (6, 13, 5))
 
     def test_bridge_pbn_parser(self):
         mock_pbn = """[Event "World Championship"]
@@ -380,7 +416,7 @@ HA H2 H7 H3
             self.assertNotIn(tokenizer.vocab["<bos>"], row["input_ids"])
             self.assertNotIn(tokenizer.vocab["<eos>"], row["input_ids"])
 
-    def test_mahjonglm_metadata_defaults_poker_seat_count(self):
+    def test_mahjonglm_metadata_requires_poker_seat_count(self):
         row = {
             "game": "poker",
             "tokens": ["<bos>", "<poker>", "view_complete", "act:fold", "<eos>"],
@@ -389,7 +425,8 @@ HA H2 H7 H3
         stream = tokens_to_mahjonglm_stream(row)
         self.assertEqual(stream[:2], ["rule_poker", "view_complete"])
         from src.mahjonglm_compat import normalize_mahjonglm_metadata
-        self.assertEqual(normalize_mahjonglm_metadata(row)["seat_count"], 2)
+        with self.assertRaises(ValueError):
+            normalize_mahjonglm_metadata(row)
 
     def test_mahjonglm_tokenizer_rejects_sparse_or_duplicate_ids(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -738,6 +775,10 @@ actions = [
         self.assertFalse(is_counted_move_token("AMT:5"))
         self.assertFalse(is_counted_move_token("ANTE_TRIMMING_STATUS:false"))
         self.assertFalse(is_counted_move_token("BETTING_TYPE:no_limit"))
+        self.assertFalse(is_counted_move_token("seat:p1"))
+        self.assertFalse(is_counted_move_token("card:Ah"))
+        self.assertFalse(is_counted_move_token("showdown:p1"))
+        self.assertFalse(is_counted_move_token("winner:p1"))
         self.assertTrue(is_counted_move_token("7g7f"))
         self.assertTrue(is_counted_move_token("act:raise"))
 
@@ -824,6 +865,32 @@ actions = [
                 "omniscient": 1,
             })
             self.assertEqual(len(result["shards"]), 1)
+
+    def test_poker_max_records_is_global_across_input_paths(self):
+        phh = """variant = 'NT'
+actions = [
+  'd dh p1 AhAd',
+  'd dh p2 KcKd',
+  'p1 cc',
+  'p2 cc',
+]
+"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            paths = []
+            for index in range(2):
+                path = os.path.join(temp_dir, f"hand{index}.phh")
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write(phh)
+                paths.append(path)
+            result = build_game_shards(
+                "poker",
+                paths,
+                os.path.join(temp_dir, "out"),
+                target_tokens=1,
+                max_records=1,
+            )
+            self.assertEqual(result["rows"], 4)
+            self.assertEqual(result["stats"]["by_seat_count"]["2"]["views"], {"complete": 1, "imperfect": 2, "omniscient": 1})
 
     def test_mahjonglm_jsonl_shard_uses_compatible_schema(self):
         with tempfile.TemporaryDirectory() as temp_dir:
