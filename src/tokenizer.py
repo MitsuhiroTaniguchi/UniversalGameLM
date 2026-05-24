@@ -1,5 +1,10 @@
 import os
 import json
+from pathlib import Path
+
+from tokenizers import Tokenizer
+from tokenizers.models import WordLevel
+from tokenizers.pre_tokenizers import WhitespaceSplit
 
 class UniversalGameTokenizer:
     """
@@ -69,6 +74,75 @@ class UniversalGameTokenizer:
         self.special_tokens = [k for k in self.vocab.keys() if k.startswith("<") and k.endswith(">")]
         print(f"[Tokenizer] Loaded vocabulary from {filepath}. Size: {len(self.vocab)}")
         return True
+
+    @classmethod
+    def from_mahjonglm_assets(cls, tokenizer_dir):
+        """
+        Loads MahjongLM tokenizer assets and preserves every existing token id.
+
+        Supported inputs:
+        - tokenizer.json
+        - vocab.txt
+        - vocab.json
+        """
+        tokenizer_dir = Path(tokenizer_dir)
+        instance = cls(special_tokens=[])
+        tokenizer_json = tokenizer_dir / "tokenizer.json"
+        vocab_txt = tokenizer_dir / "vocab.txt"
+        vocab_json = tokenizer_dir / "vocab.json"
+
+        if tokenizer_json.exists():
+            tokenizer = Tokenizer.from_file(str(tokenizer_json))
+            vocab = tokenizer.get_vocab()
+            instance.vocab = {token: int(idx) for token, idx in vocab.items()}
+        elif vocab_txt.exists():
+            with open(vocab_txt, "r", encoding="utf-8") as f:
+                instance.vocab = {line.rstrip("\n"): idx for idx, line in enumerate(f)}
+        elif vocab_json.exists():
+            with open(vocab_json, "r", encoding="utf-8") as f:
+                instance.vocab = {token: int(idx) for token, idx in json.load(f).items()}
+        else:
+            raise FileNotFoundError(f"No tokenizer.json, vocab.txt, or vocab.json found in {tokenizer_dir}")
+
+        instance.inv_vocab = {idx: token for token, idx in instance.vocab.items()}
+        instance.special_tokens = [
+            token for token in instance.vocab
+            if token.startswith("<") and token.endswith(">")
+        ]
+        return instance
+
+    def add_tokens(self, tokens):
+        added = 0
+        for token in tokens:
+            if token not in self.vocab:
+                self._register_token(token)
+                added += 1
+        return added
+
+    def save_mahjonglm_assets(self, output_dir):
+        """Writes tokenizer assets with MahjongLM ids preserved and new ids appended."""
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        ordered = [token for token, _ in sorted(self.vocab.items(), key=lambda item: item[1])]
+
+        with open(output_dir / "vocab.txt", "w", encoding="utf-8") as f:
+            for token in ordered:
+                f.write(token + "\n")
+        with open(output_dir / "vocab.json", "w", encoding="utf-8") as f:
+            json.dump(self.vocab, f, indent=2, ensure_ascii=False)
+
+        tokenizer = Tokenizer(WordLevel(vocab=self.vocab, unk_token="<unk>"))
+        tokenizer.pre_tokenizer = WhitespaceSplit()
+        tokenizer.save(str(output_dir / "tokenizer.json"))
+        with open(output_dir / "tokenizer_config.json", "w", encoding="utf-8") as f:
+            json.dump({"tokenizer_class": "PreTrainedTokenizerFast"}, f, indent=2)
+        with open(output_dir / "special_tokens_map.json", "w", encoding="utf-8") as f:
+            json.dump({
+                "unk_token": "<unk>",
+                "bos_token": "<bos>",
+                "eos_token": "<eos>",
+                "pad_token": "<pad>",
+            }, f, indent=2)
 
     @property
     def vocab_size(self):

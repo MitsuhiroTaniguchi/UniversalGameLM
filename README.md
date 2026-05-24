@@ -31,6 +31,26 @@ python3 build_production.py \
   --target-tokens 3000000000
 ```
 
+To build shards that can be concatenated with `mitsutani/mahjonglm-dataset`,
+load the MahjongLM tokenizer assets and emit MahjongLM-style rows:
+
+```bash
+python3 build_production.py \
+  --game poker \
+  --input /path/to/phh_dir \
+  --output-dir production_shards/poker \
+  --output-format mahjonglm_jsonl \
+  --mahjonglm-tokenizer-dir /path/to/mahjonglm-dataset/tokenizer \
+  --tokenizer-output-dir tokenized_data/universal_tokenizer
+```
+
+`mahjonglm_jsonl` rows use the MahjongLM-compatible fields
+`game_id`, `year`, `seat_count`, `view_type`, `viewer_seat`, `length`, and
+`input_ids`. Boundary tokens are not serialized in `input_ids`; `<bos>` and
+`<eos>` remain training-time boundary tokens, matching MahjongLM's convention.
+The base MahjongLM token ids are preserved exactly, and new game tokens are
+appended at the end of the vocabulary.
+
 To upload completed shards to Hugging Face and remove local copies after successful upload:
 
 ```bash

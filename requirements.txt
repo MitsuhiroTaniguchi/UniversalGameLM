@@ -4,4 +4,5 @@ datasets
 huggingface_hub
 py7zr
 sgfmill
+tokenizers
 zstandard

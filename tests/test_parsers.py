@@ -15,6 +15,7 @@ from src.download import safe_extract_zip
 from src.hf_uploader import HuggingFaceShardUploader
 from src.production_pipeline import build_game_shards, validate_entry, ProductionDatasetError
 from src.stats import DatasetStatsAccumulator
+from src.mahjonglm_compat import entry_to_mahjonglm_row, tokens_to_mahjonglm_stream
 
 class TestUniversalGameParsers(unittest.TestCase):
     
@@ -176,6 +177,43 @@ class TestUniversalGameParsers(unittest.TestCase):
         self.assertEqual(decoded[2], "pd")
         self.assertEqual(decoded[3], "<unk>")
         self.assertEqual(decoded[4], "<eos>")
+
+    def test_mahjonglm_tokenizer_extension_preserves_base_ids(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            tokenizer_dir = os.path.join(temp_dir, "mahjong_tokenizer")
+            os.makedirs(tokenizer_dir)
+            with open(os.path.join(tokenizer_dir, "vocab.txt"), "w", encoding="utf-8") as f:
+                f.write("<pad>\n<unk>\n<bos>\n<eos>\nrule_riichi\nview_complete\ngame_start\n")
+
+            tokenizer = UniversalGameTokenizer.from_mahjonglm_assets(tokenizer_dir)
+            self.assertEqual(tokenizer.vocab["rule_riichi"], 4)
+            added = tokenizer.add_tokens(["rule_chess", "e2e4", "e7e5"])
+            self.assertEqual(added, 3)
+            self.assertEqual(tokenizer.vocab["rule_riichi"], 4)
+            self.assertEqual(tokenizer.vocab["rule_chess"], 7)
+
+    def test_mahjonglm_row_schema_excludes_boundary_tokens(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            tokenizer_dir = os.path.join(temp_dir, "mahjong_tokenizer")
+            os.makedirs(tokenizer_dir)
+            with open(os.path.join(tokenizer_dir, "vocab.txt"), "w", encoding="utf-8") as f:
+                f.write("<pad>\n<unk>\n<bos>\n<eos>\nrule_riichi\nview_complete\nrule_chess\ne2e4\ne7e5\ng1f3\nb8c6\n")
+            tokenizer = UniversalGameTokenizer.from_mahjonglm_assets(tokenizer_dir)
+            entry = {
+                "game": "chess",
+                "tokens": ["<bos>", "<chess>", "e2e4", "e7e5", "g1f3", "b8c6", "<eos>"],
+                "metadata": {"date": "2024.01.01", "source_id": "sample"},
+            }
+            self.assertEqual(tokens_to_mahjonglm_stream(entry), ["rule_chess", "view_complete", "e2e4", "e7e5", "g1f3", "b8c6"])
+            row = entry_to_mahjonglm_row(entry, tokenizer)
+            self.assertEqual(set(row), {"game_id", "year", "seat_count", "view_type", "viewer_seat", "length", "input_ids"})
+            self.assertEqual(row["year"], 2024)
+            self.assertEqual(row["seat_count"], 2)
+            self.assertEqual(row["view_type"], "complete")
+            self.assertIsNone(row["viewer_seat"])
+            self.assertEqual(row["length"], 6)
+            self.assertNotIn(tokenizer.vocab["<bos>"], row["input_ids"])
+            self.assertNotIn(tokenizer.vocab["<eos>"], row["input_ids"])
 
     def test_safe_extract_zip_rejects_path_traversal(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -408,6 +446,39 @@ actions = [
                 "imperfect": 6,
                 "omniscient": 1,
             })
+
+    def test_mahjonglm_jsonl_shard_uses_compatible_schema(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            tokenizer_dir = os.path.join(temp_dir, "mahjong_tokenizer")
+            os.makedirs(tokenizer_dir)
+            vocab_tokens = [
+                "<pad>", "<unk>", "<bos>", "<eos>", "rule_riichi", "view_complete",
+                "rule_chess", "e2e4", "e7e5", "g1f3", "b8c6", "f1b5", "a7a6", "b5a4",
+            ]
+            with open(os.path.join(tokenizer_dir, "vocab.txt"), "w", encoding="utf-8") as f:
+                f.write("\n".join(vocab_tokens) + "\n")
+            tokenizer = UniversalGameTokenizer.from_mahjonglm_assets(tokenizer_dir)
+
+            chess_path = os.path.join(temp_dir, "sample.pgn")
+            with open(chess_path, "w", encoding="utf-8") as f:
+                f.write("""[Event "Sample"]\n[White "A"]\n[Black "B"]\n[Result "1-0"]\n[Date "2025.01.02"]\n\n1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 4. Ba4 *""")
+            result = build_game_shards(
+                "chess",
+                [chess_path],
+                os.path.join(temp_dir, "out"),
+                target_tokens=4,
+                max_records=1,
+                output_format="mahjonglm_jsonl",
+                tokenizer=tokenizer,
+            )
+            with gzip.open(result["shards"][0]["path"], "rt", encoding="utf-8") as f:
+                row = json.loads(f.readline())
+            self.assertEqual(set(row), {"game_id", "year", "seat_count", "view_type", "viewer_seat", "length", "input_ids"})
+            self.assertEqual(row["year"], 2025)
+            self.assertEqual(row["seat_count"], 2)
+            self.assertEqual(row["view_type"], "complete")
+            self.assertEqual(row["input_ids"][0], tokenizer.vocab["rule_chess"])
+            self.assertEqual(row["input_ids"][1], tokenizer.vocab["view_complete"])
 
     def test_shogi_parser_rejects_missing_terminal(self):
         with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".csa") as f:

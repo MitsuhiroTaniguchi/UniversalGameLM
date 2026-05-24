@@ -17,7 +17,9 @@ from src.othello_parser import (
 )
 from src.poker_parser import parse_phh_to_tokens
 from src.hf_uploader import HuggingFaceShardUploader
+from src.mahjonglm_compat import entry_to_mahjonglm_row, entry_to_mahjonglm_row_tokens
 from src.stats import DatasetStatsAccumulator
+from src.tokenizer import UniversalGameTokenizer
 
 
 GAME_ORDER = ("chess", "shogi", "go", "othello", "poker")
@@ -170,8 +172,16 @@ def validate_entry(entry):
             raise ProductionDatasetError(f"Unknown poker view token: {tokens[2]}")
 
 
+def row_token_count(row):
+    if "tokens" in row:
+        return len(row["tokens"])
+    if "input_ids" in row:
+        return len(row["input_ids"])
+    return int(row.get("length") or 0)
+
+
 class JsonlShardWriter:
-    def __init__(self, output_dir, game, max_tokens_per_shard=5_000_000, compress=True):
+    def __init__(self, output_dir, game, max_tokens_per_shard=5_000_000, compress=True, row_transform=None):
         self.output_dir = Path(output_dir)
         self.game = game
         self.max_tokens_per_shard = max_tokens_per_shard
@@ -186,6 +196,7 @@ class JsonlShardWriter:
         self.current_temp_path = None
         self.current_hash = None
         self.completed = []
+        self.row_transform = row_transform
 
     def _open_next(self):
         suffix = ".jsonl.gz" if self.compress else ".jsonl"
@@ -228,17 +239,18 @@ class JsonlShardWriter:
 
     def write(self, entry):
         validate_entry(entry)
+        row = self.row_transform(entry) if self.row_transform else entry
         if self.current_file is None:
             self._open_next()
 
-        token_count = len(entry["tokens"])
+        token_count = row_token_count(row)
         if self.current_rows > 0 and self.current_tokens + token_count > self.max_tokens_per_shard:
             completed = self._close_current()
             self._open_next()
         else:
             completed = None
 
-        payload = json.dumps(entry, ensure_ascii=False).encode("utf-8") + b"\n"
+        payload = json.dumps(row, ensure_ascii=False).encode("utf-8") + b"\n"
         self.current_hash.update(payload)
         self.current_file.write(payload)
         self.current_tokens += token_count
@@ -259,8 +271,24 @@ def build_game_shards(
     uploader=None,
     delete_after_upload=False,
     repo_prefix="",
+    output_format="universal_jsonl",
+    tokenizer=None,
 ):
-    writer = JsonlShardWriter(output_dir, game, max_tokens_per_shard=max_tokens_per_shard)
+    if output_format not in {"universal_jsonl", "mahjonglm_jsonl"}:
+        raise ValueError(f"Unsupported output_format: {output_format}")
+    if output_format == "mahjonglm_jsonl" and tokenizer is None:
+        raise ValueError("mahjonglm_jsonl output requires a tokenizer")
+
+    row_transform = None
+    if output_format == "mahjonglm_jsonl":
+        row_transform = lambda entry: entry_to_mahjonglm_row(entry, tokenizer)
+
+    writer = JsonlShardWriter(
+        output_dir,
+        game,
+        max_tokens_per_shard=max_tokens_per_shard,
+        row_transform=row_transform,
+    )
     stats = DatasetStatsAccumulator()
     total_tokens = 0
     total_rows = 0
@@ -272,9 +300,12 @@ def build_game_shards(
             starts_new_view_group = game != "poker" or metadata.get("view_type") == "complete"
             if total_tokens >= target_tokens and starts_new_view_group:
                 break
+            stats_entry = entry
+            if output_format == "mahjonglm_jsonl":
+                stats_entry = {**entry, "tokens": entry_to_mahjonglm_row_tokens(entry)}
             completed = writer.write(entry)
-            stats.update(entry)
-            total_tokens += len(entry["tokens"])
+            stats.update(stats_entry)
+            total_tokens += row_token_count(row_transform(entry) if row_transform else entry)
             total_rows += 1
 
             if completed and uploader:
@@ -323,3 +354,17 @@ def maybe_hf_uploader(repo_id):
     uploader = HuggingFaceShardUploader(repo_id)
     uploader.ensure_repo(private=os.environ.get("HF_PRIVATE", "1") != "0")
     return uploader
+
+
+def build_mahjonglm_tokenizer(base_tokenizer_dir, input_specs, output_dir):
+    """
+    Extends a MahjongLM tokenizer with tokens needed by UniversalGameLM entries.
+
+    input_specs: iterable of (game, [input_paths], max_records)
+    """
+    tokenizer = UniversalGameTokenizer.from_mahjonglm_assets(base_tokenizer_dir)
+    for game, input_paths, max_records in input_specs:
+        for entry in iter_game_entries(game, input_paths, max_records=max_records):
+            tokenizer.add_tokens(entry_to_mahjonglm_row_tokens(entry))
+    tokenizer.save_mahjonglm_assets(output_dir)
+    return tokenizer
