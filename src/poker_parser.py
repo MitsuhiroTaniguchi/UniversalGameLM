@@ -144,7 +144,7 @@ class PokerHandSimulator:
             tokens.extend([f"seat:p{seat}", "act:call"] + _number_digit_tokens("AMT", call_amount))
         return tokens
 
-    def simulate_hand(self):
+    def simulate_hand(self, return_state=False):
         """Simulates one No-Limit Hold'em hand and yields tokens."""
         # Shuffle deck
         deck = list(self.deck)
@@ -156,13 +156,13 @@ class PokerHandSimulator:
             hands[s] = [deck.pop(), deck.pop()]
             
         # State tokens list
-        tokens = ["<bos>", "<poker>", "view_complete"]
+        public_tokens = []
         
         # 2. Blinds Posting. Hole cards are intentionally not emitted here:
         # pre-showdown action tokens must not leak hidden information.
         sb_amt, bb_amt = 10, 20
-        tokens.extend(["act:preflop", "seat:p1", "act:post_small_blind"] + _number_digit_tokens("AMT", sb_amt))
-        tokens.extend(["seat:p2", "act:post_big_blind"] + _number_digit_tokens("AMT", bb_amt))
+        public_tokens.extend(["act:preflop", "seat:p1", "act:post_small_blind"] + _number_digit_tokens("AMT", sb_amt))
+        public_tokens.extend(["seat:p2", "act:post_big_blind"] + _number_digit_tokens("AMT", bb_amt))
         
         # Community Cards
         flop = [deck.pop(), deck.pop(), deck.pop()]
@@ -175,6 +175,7 @@ class PokerHandSimulator:
         # Pre-flop betting
         # Seats 1-6 profiles: 1 is SB, 2 is BB, 3 is UTG, 4 is HJ, 5 is CO, 6 is BTN
         preflop_order = [seat for seat in list(range(3, self.num_seats + 1)) + [1, 2] if seat in active_players]
+        preflop_raised = False
         for s in preflop_order:
             if s not in active_players:
                 continue
@@ -186,20 +187,20 @@ class PokerHandSimulator:
             is_pair = (card1_val == card2_val)
             
             if s == 2:
-                action_tokens = ["act:check"]
+                action_tokens = (["act:call"] + _number_digit_tokens("AMT", bb_amt)) if preflop_raised else ["act:check"]
             elif is_strong or is_pair:
                 action_tokens = ["act:call"] + _number_digit_tokens("AMT", bb_amt)
             else:
                 action_tokens = ["act:fold"]
                 active_players.remove(s)
                 
-            tokens.extend([f"seat:p{s}"] + action_tokens)
+            public_tokens.extend([f"seat:p{s}"] + action_tokens)
             
         # Flop betting round (if at least 2 active players left)
         if len(active_players) >= 2:
-            tokens.extend(["act:flop"] + [f"card:{card}" for card in flop])
+            public_tokens.extend(["act:flop"] + [f"card:{card}" for card in flop])
             flop_ranks = {card[0] for card in flop}
-            tokens.extend(self._postflop_betting_round(
+            public_tokens.extend(self._postflop_betting_round(
                 active_players,
                 lambda seat: hands[seat][0][0] in flop_ranks or hands[seat][1][0] in flop_ranks,
                 40,
@@ -207,15 +208,15 @@ class PokerHandSimulator:
                 
         # Turn betting round
         if len(active_players) >= 2:
-            tokens.extend(["act:turn", f"card:{turn[0]}"])
+            public_tokens.extend(["act:turn", f"card:{turn[0]}"])
             for s in list(active_players):
-                tokens.extend([f"seat:p{s}", "act:check"])
+                public_tokens.extend([f"seat:p{s}", "act:check"])
                 
         # River betting round
         if len(active_players) >= 2:
-            tokens.extend(["act:river", f"card:{river[0]}"])
+            public_tokens.extend(["act:river", f"card:{river[0]}"])
             river_bettor = active_players[0]
-            tokens.extend(self._postflop_betting_round(active_players, lambda seat: seat == river_bettor, 100))
+            public_tokens.extend(self._postflop_betting_round(active_players, lambda seat: seat == river_bettor, 100))
                 
         # Showdown & Determine Winner
         winner = None
@@ -225,14 +226,14 @@ class PokerHandSimulator:
             # Evaluate hands
             best_score = None
             for s in active_players:
-                tokens.extend([f"showdown:p{s}", f"card:{hands[s][0]}", f"card:{hands[s][1]}"])
+                public_tokens.extend([f"showdown:p{s}", f"card:{hands[s][0]}", f"card:{hands[s][1]}"])
                 score = self._score_key(self.get_best_hand(hands[s], flop + turn + river))
                 if best_score is None or score > best_score:
                     best_score = score
                     winner = s
                     
-        tokens.append(f"winner:p{winner}")
-        tokens.append("<eos>")
+        public_tokens.append(f"winner:p{winner}")
+        tokens = ["<bos>", "<poker>", "view_complete"] + public_tokens + ["<eos>"]
         
         metadata = {
             "num_players": self.num_seats,
@@ -244,10 +245,41 @@ class PokerHandSimulator:
             "seat_count": self.num_seats,
             "view_type": "complete",
             "viewer_seat": None,
-            "move_count": len(tokens) - 4 # excluding bos/eos/game/view tokens
+            "move_count": len(public_tokens),
         }
-        
+        if return_state:
+            return tokens, metadata, hands, deck
         return tokens, metadata
+
+    def simulate_hand_views(self):
+        complete_tokens, base_metadata, hands, undealt_cards = self.simulate_hand(return_state=True)
+        view_group_id = f"synthetic:{hashlib.sha256(' '.join(complete_tokens).encode('utf-8')).hexdigest()[:16]}"
+        base_metadata = {
+            **base_metadata,
+            "view_group_id": view_group_id,
+            "view_rows_per_hand": self.num_seats + 2,
+        }
+        yield complete_tokens, {**base_metadata, "view_type": "complete", "viewer_seat": None}
+        public_body = complete_tokens[3:-1]
+        for seat in range(1, self.num_seats + 1):
+            yield (
+                ["<bos>", "<poker>", f"view_imperfect_p{seat}"]
+                + _private_card_tokens(seat, hands[seat])
+                + public_body
+                + ["<eos>"],
+                {**base_metadata, "view_type": "imperfect", "viewer_seat": seat},
+            )
+        private_tokens = []
+        for seat in range(1, self.num_seats + 1):
+            private_tokens.extend(_private_card_tokens(seat, hands[seat]))
+        yield (
+            ["<bos>", "<poker>", "view_omniscient"]
+            + private_tokens
+            + _undealt_card_tokens(undealt_cards)
+            + public_body
+            + ["<eos>"],
+            {**base_metadata, "view_type": "omniscient", "viewer_seat": None},
+        )
 
 def generate_poker_dataset(n_hands=100):
     """
@@ -256,7 +288,7 @@ def generate_poker_dataset(n_hands=100):
     simulator = PokerHandSimulator()
     print(f"[Simulating Poker] Generating {n_hands} Hold'em hand histories...")
     for _ in range(n_hands):
-        yield simulator.simulate_hand()
+        yield from simulator.simulate_hand_views()
     print(f"[Success] Generated {n_hands} simulated Poker hands.")
 
 def _sanitize_poker_action(action):
@@ -416,7 +448,7 @@ def _shown_hole_from_action(action):
     return seat, cards[:2]
 
 
-def _players_from_state_and_actions(state_tokens, actions, private_holes):
+def _players_from_actions(actions, private_holes):
     seats = set(private_holes)
     for action in actions:
         seat = _seat_from_action(action)
@@ -569,7 +601,7 @@ def _observed_private_holes(actions, state_tokens, private_holes):
     public_cards = _observed_cards_from_public_actions(actions)
     known_private_cards = [card for cards in private_holes.values() for card in cards]
     _assert_unique_cards(public_cards + known_private_cards)
-    players = _players_from_state_and_actions(state_tokens, actions, private_holes)
+    players = _players_from_actions(actions, private_holes)
     missing = [seat for seat in players if seat not in private_holes]
     undealt_cards = []
     if not missing:

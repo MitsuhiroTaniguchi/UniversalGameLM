@@ -46,10 +46,10 @@ class ProductionDatasetError(RuntimeError):
 
 @lru_cache(maxsize=4096)
 def source_id_for_path(path):
-    path_obj = Path(path)
     if str(path).startswith("hf://"):
         digest = hashlib.sha256(str(path).encode("utf-8")).hexdigest()[:16]
         return f"{path}:{digest}"
+    path_obj = Path(path)
     resolved = path_obj.resolve()
     hasher = hashlib.sha256()
     if resolved.is_file():
@@ -135,13 +135,19 @@ def validate_entry(entry):
         raise ProductionDatasetError(f"{game} sequence contains an invalid token")
     if game == "chess":
         board = chess.Board()
+        variant = None
         for token in tokens[2:-1]:
             if token.startswith("VARIANT:"):
+                variant = token.split(":", 1)[1]
+                if variant in {"chess960", "fischerandom", "fischer_random"}:
+                    board = chess.Board(chess960=True)
+                elif variant not in {"chess", "standard"}:
+                    raise ProductionDatasetError(f"Unsupported chess variant token: {token}")
                 continue
             if token.startswith("FEN:"):
                 fen = token.split(":", 1)[1].replace("_", " ")
                 try:
-                    board = chess.Board(fen)
+                    board = chess.Board(fen, chess960=variant in {"chess960", "fischerandom", "fischer_random"})
                 except ValueError as exc:
                     raise ProductionDatasetError(f"Invalid chess FEN token: {token}") from exc
                 continue
@@ -153,7 +159,7 @@ def validate_entry(entry):
             board.push(move)
     if game == "shogi":
         for token in tokens[2:-1]:
-            if token.startswith(("SETUP:", "TURN:", "END:")):
+            if token.startswith(("TURN:", "END:")):
                 continue
             if token == "None" or not re.fullmatch(r"(?:[1-9][a-i][1-9][a-i]\+?|[PLNSGBR]\*[1-9][a-i])", token):
                 raise ProductionDatasetError(f"Invalid shogi USI token: {token}")
@@ -463,11 +469,8 @@ def assert_source_allowed_for_primary_build(catalog, game, source_name, allow_fa
     source = source_catalog_entry(catalog, game, source_name)
     source_class = source.get("source_class")
     quality_tier = source.get("quality_tier")
-    if source_class in {"engine_top", "human_top"} and quality_tier not in {
-        "excluded_from_primary",
-        "excluded_from_policy_training",
-        "filtered_fallback_only",
-    }:
+    primary_tiers = {"primary_3b", "primary_3b_generated", "primary_or_mix"}
+    if source_class in {"engine_top", "human_top"} and quality_tier in primary_tiers:
         return source
     if allow_fallback and quality_tier in {"filtered_fallback_only", "primary_or_mix", "candidate_primary"}:
         return source

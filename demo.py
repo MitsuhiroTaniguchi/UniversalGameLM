@@ -7,6 +7,7 @@ from src.chess_parser import parse_pgn_to_tokens
 from src.shogi_parser import parse_shogi_directory
 from src.go_parser import parse_go_directory
 from src.othello_parser import parse_othello_pgn_to_tokens
+from src.bridge_parser import parse_bridge_inputs
 from src.poker_parser import generate_poker_dataset
 from src.tokenizer import UniversalGameTokenizer
 from src.stats import DatasetStatsAccumulator
@@ -82,6 +83,12 @@ def iter_real_game_entries():
     if os.path.exists(othello_pgn_path):
         for tokens, meta in parse_othello_pgn_to_tokens(othello_pgn_path, max_games=othello_max):
             yield {"game": "othello", "tokens": tokens, "metadata": meta}
+
+    bridge_dir = os.path.join(BASE_DIR, "data", "bridge")
+    bridge_max = env_optional_int("BRIDGE_PARSE_MAX_GAMES", 100)
+    if os.path.exists(bridge_dir):
+        for tokens, meta in parse_bridge_inputs(bridge_dir, max_games=bridge_max):
+            yield {"game": "bridge", "tokens": tokens, "metadata": meta}
 
 def iter_synthetic_entries():
     """Streams optional simulator-only entries that must not be mixed into default real-data runs."""
@@ -161,7 +168,7 @@ def main():
     row_count = 0
     with open(DATASET_PATH, "w", encoding="utf-8") as f:
         for entry in entries:
-            encoded_ids = tokenizer.encode(entry["tokens"])
+            encoded_ids = tokenizer.encode_strict(entry["tokens"])
             serialized = {
                 "game": entry["game"],
                 "tokens": entry["tokens"],

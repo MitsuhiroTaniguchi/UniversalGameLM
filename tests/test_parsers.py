@@ -10,6 +10,7 @@ from src.shogi_parser import parse_csa_to_tokens, parse_shogi_directory
 from src.go_parser import parse_sgf_to_tokens
 from src.othello_parser import parse_othello_pgn_to_tokens, validate_othello_moves
 from src.poker_parser import PokerHandSimulator
+from src.poker_parser import generate_poker_dataset
 from src.poker_parser import parse_phh_to_tokens
 from src.bridge_parser import parse_bridge_inputs, parse_pbn_to_tokens
 from src.tokenizer import UniversalGameTokenizer
@@ -138,6 +139,17 @@ class TestUniversalGameParsers(unittest.TestCase):
         finally:
             os.remove(temp_path)
 
+    def test_go_validation_rejects_repeated_positions(self):
+        tokens = [
+            "<bos>", "<go>", "SZ:5",
+            "AB:be", "AB:ad", "AB:bc",
+            "AW:bd", "AW:ce", "AW:dd", "AW:cc",
+            "b:cd", "w:bd", "<eos>",
+        ]
+        with self.assertRaises(ValueError):
+            from src.go_parser import validate_go_token_sequence
+            validate_go_token_sequence(tokens)
+
     def test_default_tokenizer_includes_all_game_markers(self):
         tokenizer = UniversalGameTokenizer()
         for marker in ("<chess>", "<shogi>", "<go>", "<othello>", "<poker>", "<bridge>"):
@@ -227,6 +239,18 @@ class TestUniversalGameParsers(unittest.TestCase):
                 self.assertTrue(street_has_bet)
             elif in_postflop_street and token == "act:check":
                 self.assertFalse(street_has_bet)
+
+    def test_poker_simulator_dataset_emits_all_views(self):
+        entries = list(generate_poker_dataset(n_hands=1))
+        self.assertEqual(len(entries), 8)
+        view_types = [meta["view_type"] for _, meta in entries]
+        self.assertEqual(view_types.count("complete"), 1)
+        self.assertEqual(view_types.count("imperfect"), 6)
+        self.assertEqual(view_types.count("omniscient"), 1)
+        for tokens, meta in entries:
+            validate_entry({"game": "poker", "tokens": tokens, "metadata": meta})
+        self.assertTrue(any(token.startswith("private_card:") for token in entries[-1][0]))
+        self.assertTrue(any(token.startswith("undealt_card:") for token in entries[-1][0]))
 
     def test_poker_score_compares_tie_breakers(self):
         simulator = PokerHandSimulator()
