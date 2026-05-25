@@ -38,10 +38,109 @@ PRIVATE_POKER_TOKEN_PATTERNS = (
     re.compile(r"^dh(?:[_: -]|$)", re.IGNORECASE),
     re.compile(r"^show[_: -]?or[_: -]?muck[_: -]?hole", re.IGNORECASE),
 )
+POKER_STREET_ORDER = {
+    "act:preflop": 0,
+    "act:flop": 1,
+    "act:turn": 2,
+    "act:river": 3,
+}
+POKER_PLAYER_ACTIONS = {
+    "act:post_small_blind",
+    "act:post_big_blind",
+    "act:post_blind",
+    "act:post_ante",
+    "act:blind",
+    "act:ante",
+    "act:bet",
+    "act:call",
+    "act:check",
+    "act:fold",
+    "act:raise",
+    "act:show",
+    "act:muck",
+}
+POKER_AMOUNT_REQUIRED_ACTIONS = {
+    "act:post_small_blind",
+    "act:post_big_blind",
+    "act:post_blind",
+    "act:post_ante",
+    "act:blind",
+    "act:ante",
+    "act:bet",
+    "act:raise",
+}
+POKER_NON_SEAT_ACTIONS = {
+    "act:deal_board",
+    "act:hidden",
+}
 
 
 class ProductionDatasetError(RuntimeError):
     pass
+
+
+def _next_token_has_prefix(tokens, index, prefix):
+    return index + 1 < len(tokens) - 1 and tokens[index + 1].startswith(prefix)
+
+
+def validate_poker_public_sequence(tokens):
+    current_street = -1
+    pending_seat = False
+    blinds_seen = False
+    for index, token in enumerate(tokens[3:-1], start=3):
+        if token.startswith((
+            "VARIANT:",
+            "STARTING_STACKS:",
+            "MIN_BET:",
+            "ANTE_TRIMMING_STATUS:",
+            "BETTING_TYPE:",
+            "NUM:",
+            "AMT:",
+            "private_card:",
+            "undealt_card:",
+            "card:",
+            "showdown:",
+            "winner:",
+        )):
+            continue
+        if token.startswith(("BLINDS_OR_STRADDLES:", "ANTES:")):
+            blinds_seen = True
+            continue
+        if token.startswith("seat:"):
+            if not re.fullmatch(r"seat:p\d+", token):
+                raise ProductionDatasetError(f"Invalid poker seat token: {token}")
+            pending_seat = True
+            continue
+        if token in POKER_STREET_ORDER:
+            street_index = POKER_STREET_ORDER[token]
+            if street_index <= current_street:
+                raise ProductionDatasetError(f"Poker street token is out of order: {token}")
+            current_street = street_index
+            pending_seat = False
+            continue
+        if token in POKER_NON_SEAT_ACTIONS:
+            pending_seat = False
+            continue
+        if token.startswith("act:"):
+            if token not in POKER_PLAYER_ACTIONS:
+                raise ProductionDatasetError(f"Unknown poker action token: {token}")
+            if not pending_seat:
+                raise ProductionDatasetError(f"Poker player action is missing a preceding seat token: {token}")
+            if token in {"act:bet", "act:raise"} and not blinds_seen:
+                raise ProductionDatasetError(f"Poker betting action appears before blind/ante posting: {token}")
+            if token in {
+                "act:post_small_blind",
+                "act:post_big_blind",
+                "act:post_blind",
+                "act:blind",
+                "act:ante",
+            }:
+                blinds_seen = True
+            if token in POKER_AMOUNT_REQUIRED_ACTIONS and not _next_token_has_prefix(tokens, index, "AMT:"):
+                raise ProductionDatasetError(f"Poker action is missing amount tokens: {token}")
+            pending_seat = False
+            continue
+        raise ProductionDatasetError(f"Invalid poker token: {token}")
 
 
 @lru_cache(maxsize=4096)
@@ -226,6 +325,7 @@ def validate_entry(entry):
                 raise ProductionDatasetError("Poker omniscient view is missing undealt-card tokens")
         else:
             raise ProductionDatasetError(f"Unknown poker view token: {tokens[2]}")
+        validate_poker_public_sequence(tokens)
     if game == "bridge":
         if not tokens[2].startswith("view_"):
             raise ProductionDatasetError("Bridge entry is missing view token")

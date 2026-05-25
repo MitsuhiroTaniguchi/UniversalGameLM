@@ -4,6 +4,7 @@ import json
 import os
 import sys
 import tempfile
+from pathlib import Path
 
 from src.production_pipeline import (
     DEFAULT_TARGET_TOKENS,
@@ -33,6 +34,9 @@ def main():
     parser.add_argument("--source-name", action="append", help="Catalog source name for each --input. Required for uncapped production-size builds.")
     parser.add_argument("--allow-fallback-source", action="store_true", help="Permit catalog entries marked as filtered fallback/candidate sources.")
     args = parser.parse_args()
+    output_dir = args.output_dir
+    if output_dir == parser.get_default("output_dir"):
+        output_dir = str(Path(output_dir) / args.game)
 
     if args.source_name:
         if len(args.source_name) not in {1, len(args.input)}:
@@ -90,7 +94,7 @@ def main():
             result = build_game_shards(
                 args.game,
                 args.input,
-                args.output_dir,
+                output_dir,
                 target_tokens=args.target_tokens,
                 max_tokens_per_shard=args.max_tokens_per_shard,
                 max_records=args.max_records,

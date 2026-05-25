@@ -13,6 +13,7 @@ from src.poker_parser import generate_poker_dataset
 from src.tokenizer import UniversalGameTokenizer
 from src.stats import DatasetStatsAccumulator
 from src.hf_uploader import HuggingFaceShardUploader
+from src.production_pipeline import validate_entry
 
 # Paths
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -165,6 +166,7 @@ def main():
     row_count = 0
     with open(cache_path, "w", encoding="utf-8") as cache:
         for entry in iter_dataset_entries():
+            validate_entry(entry)
             tokenizer.add_tokens(entry["tokens"])
             cache.write(json.dumps(entry, ensure_ascii=False) + "\n")
             row_count += 1
@@ -180,6 +182,7 @@ def main():
         with open(cache_path, "r", encoding="utf-8") as cache:
             entries = (json.loads(line) for line in cache if line.strip())
             for entry in entries:
+                validate_entry(entry)
                 encoded_ids = tokenizer.encode_strict(entry["tokens"])
                 serialized = {
                     "game": entry["game"],

@@ -71,6 +71,8 @@ def normalize_mahjonglm_metadata(entry):
     viewer_seat = metadata.get("viewer_seat")
     seat_count = metadata.get("seat_count") or DEFAULT_SEAT_COUNTS.get(game)
     if seat_count is None:
+        if game == "poker":
+            raise ValueError("Missing seat_count for poker; poker table size is variable, so metadata.seat_count is required")
         raise ValueError(f"Missing seat_count for {game}")
 
     return {

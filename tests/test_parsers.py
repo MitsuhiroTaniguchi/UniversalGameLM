@@ -338,6 +338,15 @@ class TestUniversalGameParsers(unittest.TestCase):
             if token == "seat:p2" and tokens[index + 1] == "act:call"
         ]
         self.assertEqual(len(p2_call_positions), 2)
+        check_tokens, check_remaining = simulator._postflop_betting_round(
+            [1, 2, 3],
+            should_bet=lambda seat: False,
+            should_continue=lambda seat: True,
+            should_raise=lambda seat: False,
+            bet_amount=100,
+        )
+        self.assertEqual(check_remaining, [1, 2, 3])
+        self.assertEqual(check_tokens, ["seat:p1", "act:check", "seat:p2", "act:check", "seat:p3", "act:check"])
 
     def test_poker_preflop_reraises_increase_amount_and_get_responses(self):
         simulator = PokerHandSimulator(num_seats=4)
@@ -375,6 +384,14 @@ class TestUniversalGameParsers(unittest.TestCase):
             "tokens": ["<bos>", "<chess>", "VARIANT:chess_960", "<eos>"],
             "metadata": {"seat_count": 2, "view_type": "complete"},
         })
+
+    def test_validate_entry_rejects_poker_bet_before_blinds(self):
+        with self.assertRaises(ProductionDatasetError):
+            validate_entry({
+                "game": "poker",
+                "tokens": ["<bos>", "<poker>", "view_complete", "seat:p1", "act:raise", "AMT:6", "AMT:0", "<eos>"],
+                "metadata": {"seat_count": 2, "view_type": "complete"},
+            })
 
     def test_bridge_pbn_parser(self):
         mock_pbn = """[Event "World Championship"]
@@ -824,6 +841,24 @@ actions = [
         finally:
             os.remove(temp_path)
 
+    def test_phh_parser_ignores_brackets_inside_comments(self):
+        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".phh") as f:
+            f.write('''actions = [
+  "deal_hole P1 AhAd",
+  "deal_hole P2 KcKd",
+  "post_blind P1 50",  # [small blind
+  "post_blind P2 100",
+  "call P1"
+]
+''')
+            temp_path = f.name
+        try:
+            hands = list(parse_phh_to_tokens(temp_path))
+            self.assertEqual(len(hands), 4)
+            self.assertIn("act:post_blind", hands[0][0])
+        finally:
+            os.remove(temp_path)
+
     def test_phh_parser_handles_canonical_single_quoted_actions_and_directories(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             phh_dir = os.path.join(temp_dir, "hands")
@@ -950,6 +985,8 @@ actions = [
         self.assertFalse(is_counted_move_token("showdown:p1"))
         self.assertFalse(is_counted_move_token("winner:p1"))
         self.assertFalse(is_counted_move_token("act:flop"))
+        self.assertFalse(is_counted_move_token("act:deal_board"))
+        self.assertFalse(is_counted_move_token("act:hidden"))
         self.assertTrue(is_counted_move_token("7g7f"))
         self.assertTrue(is_counted_move_token("act:raise"))
 
@@ -1050,6 +1087,7 @@ HA H9 H5 H2
             phh_path = os.path.join(temp_dir, "six.phh")
             with open(phh_path, "w", encoding="utf-8") as f:
                 f.write("""variant = 'NT'
+blinds_or_straddles = [50, 100, 0, 0, 0, 0]
 starting_stacks = [10000, 10000, 10000, 10000, 10000, 10000]
 actions = [
   'd dh p1 AhAd',

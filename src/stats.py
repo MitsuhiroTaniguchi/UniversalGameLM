@@ -2,6 +2,7 @@ import collections
 
 NON_MOVE_TOKENS = {
     "act:preflop", "act:flop", "act:turn", "act:river",
+    "act:deal_board", "act:hidden",
 }
 
 NON_MOVE_PREFIXES = (

@@ -209,13 +209,10 @@ class PokerHandSimulator:
             is_strong, is_pair, is_premium_pair = hand_flags(seat)
             can_raise = is_premium_pair and raise_count < 2
             if can_raise:
-                previous_amount = current_amount
                 current_amount = 60 if current_amount < 60 else current_amount * 2
                 action_tokens = ["act:raise"] + _number_digit_tokens("AMT", current_amount)
                 raise_count += 1
                 needs_response = [s for s in acted_remaining if s != seat]
-                if previous_amount == bb_amt:
-                    needs_response = [s for s in needs_response if s != 2]
             elif seat == 2 and current_amount == bb_amt:
                 action_tokens = ["act:check"]
             elif is_strong or is_pair:
@@ -309,7 +306,7 @@ class PokerHandSimulator:
             river_rank = river[0][0]
             river_bettor = next(
                 (seat for seat in active_players if any(card[0] == river_rank for card in hands[seat])),
-                active_players[0],
+                None,
             )
             round_tokens, active_players = self._postflop_betting_round(
                 active_players,
@@ -453,7 +450,35 @@ def _parse_phh_scalar(text, name):
         return value.strip("\"'")
 
 
+def _strip_comments_outside_strings(text):
+    lines = []
+    for line in text.splitlines():
+        quote = None
+        escaped = False
+        output = []
+        for char in line:
+            if quote:
+                output.append(char)
+                if escaped:
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                elif char == quote:
+                    quote = None
+                continue
+            if char in ("'", '"'):
+                quote = char
+                output.append(char)
+            elif char == "#":
+                break
+            else:
+                output.append(char)
+        lines.append("".join(output))
+    return "\n".join(lines)
+
+
 def _extract_actions_literals(text):
+    text = _strip_comments_outside_strings(text)
     match = re.search(r"^actions\s*=\s*\[", text, flags=re.MULTILINE)
     if not match:
         return []
