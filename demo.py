@@ -122,7 +122,7 @@ def build_manifest(stats_summary, target_tokens_per_game):
             "target_tokens": item["target_tokens"],
             "token_deficit": item["token_deficit"],
             "coverage": coverage,
-            "status": "ready" if item["token_deficit"] == 0 else "insufficient",
+            "status": "ready" if item["token_deficit"] is not None and item["token_deficit"] == 0 else "insufficient",
         }
 
     missing_games = sorted(set(["chess", "shogi", "go", "othello", "poker", "bridge"]) - set(games))

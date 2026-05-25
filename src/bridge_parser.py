@@ -130,7 +130,7 @@ def _bid_rank(call):
     return int(call[0]), STRAIN_ORDER[call[1]]
 
 
-def _validate_auction(calls, dealer):
+def _validate_auction(calls, dealer, require_terminated=True):
     if dealer not in SEATS:
         raise ValueError("Bridge auction requires a valid dealer")
     highest_bid = None
@@ -168,7 +168,7 @@ def _validate_auction(calls, dealer):
         highest_bid = call
         highest_bid_side = side
         contract_status = None
-    if calls and not ended:
+    if require_terminated and calls and not ended:
         raise ValueError("Auction is not terminated")
     return True
 
@@ -264,8 +264,8 @@ def _bridge_block_to_tokens(block, source_path):
     dealer = tags.get("Dealer", "").upper()
     auction_starter = _section_starter(tags, "Auction", dealer)
     calls = _parse_auction(block, tags)
-    _validate_auction(calls, auction_starter)
     played_cards = _parse_play(block, tags)
+    _validate_auction(calls, auction_starter, require_terminated=bool(played_cards))
     play_starter = _opening_leader(tags)
     trump_suit = _contract_trump(tags, calls)
     played_by_seat = _annotated_play(played_cards, hands, play_starter, trump_suit)

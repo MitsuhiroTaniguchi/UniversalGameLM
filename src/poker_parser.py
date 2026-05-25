@@ -189,7 +189,8 @@ class PokerHandSimulator:
         return tokens, remaining
 
     def _preflop_betting_round(self, hands, active_players, bb_amt):
-        order = [seat for seat in list(range(3, self.num_seats + 1)) + [1, 2] if seat in active_players]
+        remaining = list(active_players)
+        order = [seat for seat in list(range(3, self.num_seats + 1)) + [1, 2] if seat in remaining]
         current_amount = bb_amt
         acted_remaining = []
         needs_response = []
@@ -205,7 +206,7 @@ class PokerHandSimulator:
             return is_strong, is_pair, is_premium_pair
 
         for seat in order:
-            if seat not in active_players:
+            if seat not in remaining:
                 continue
             is_strong, is_pair, is_premium_pair = hand_flags(seat)
             can_raise = is_premium_pair and raise_count < 2
@@ -220,21 +221,21 @@ class PokerHandSimulator:
                 action_tokens = ["act:call"] + _number_digit_tokens("AMT", current_amount)
             else:
                 action_tokens = ["act:fold"]
-                active_players.remove(seat)
+                remaining.remove(seat)
             tokens.extend([f"seat:p{seat}"] + action_tokens)
-            if seat in active_players and seat not in acted_remaining:
+            if seat in remaining and seat not in acted_remaining:
                 acted_remaining.append(seat)
 
         for seat in needs_response:
-            if seat not in active_players:
+            if seat not in remaining:
                 continue
             is_strong, is_pair, _ = hand_flags(seat)
             if is_strong or is_pair:
                 tokens.extend([f"seat:p{seat}", "act:call"] + _number_digit_tokens("AMT", current_amount))
             else:
                 tokens.extend([f"seat:p{seat}", "act:fold"])
-                active_players.remove(seat)
-        return tokens, active_players
+                remaining.remove(seat)
+        return tokens, remaining
 
     def simulate_hand(self, return_state=False):
         """Simulates one No-Limit Hold'em hand and yields tokens."""

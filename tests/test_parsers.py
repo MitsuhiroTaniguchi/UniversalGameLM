@@ -5,11 +5,13 @@ import zipfile
 import gzip
 import json
 import re
+import sys
+import types
 from unittest import mock
 from src.chess_parser import parse_pgn_to_tokens
 from src.shogi_parser import parse_csa_to_tokens, parse_shogi_directory
 from src.go_parser import parse_sgf_to_tokens
-from src.othello_parser import othello_move_count, parse_othello_jsonl_to_tokens, parse_othello_pgn_to_tokens, validate_othello_moves
+from src.othello_parser import othello_move_count, parse_othello_hf_dataset, parse_othello_jsonl_to_tokens, parse_othello_pgn_to_tokens, validate_othello_moves
 from src.poker_parser import PokerHandSimulator
 from src.poker_parser import generate_poker_dataset
 from src.poker_parser import poker_action_count
@@ -228,6 +230,15 @@ class TestUniversalGameParsers(unittest.TestCase):
         finally:
             os.remove(temp_path)
 
+    def test_othello_hf_parser_sets_source_path(self):
+        fake_datasets = types.SimpleNamespace(load_dataset=lambda *args, **kwargs: iter([{"moves": TERMINAL_OTHELLO_MOVES}]))
+        with mock.patch.dict(sys.modules, {"datasets": fake_datasets}):
+            entries = list(parse_othello_hf_dataset("org/othello", split="train", max_games=1))
+        self.assertEqual(len(entries), 1)
+        _, meta = entries[0]
+        self.assertEqual(meta["source_path"], "hf://org/othello:train")
+        self.assertEqual(meta["seat_count"], 2)
+
     def test_othello_multiline_comments_and_passes_do_not_count_as_moves(self):
         with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".pgn") as f:
             f.write("""[Event "Othello"]\n[Black "B"]\n[White "W"]\n\n{comment\nwith D3 inside}\n""" + terminal_othello_pgn())
@@ -387,10 +398,24 @@ class TestUniversalGameParsers(unittest.TestCase):
             1: ["Ah", "Kd"],
             2: ["As", "Ad"],
         }
-        tokens, remaining = simulator._preflop_betting_round(hands, [1, 2], 20)
+        original_active = [1, 2]
+        tokens, remaining = simulator._preflop_betting_round(hands, original_active, 20)
+        self.assertEqual(original_active, [1, 2])
         self.assertEqual(remaining, [1, 2])
         p2_index = tokens.index("seat:p2")
         self.assertEqual(tokens[p2_index + 1], "act:raise")
+
+    def test_poker_preflop_does_not_mutate_active_players(self):
+        simulator = PokerHandSimulator(num_seats=3)
+        hands = {
+            1: ["2h", "7d"],
+            2: ["As", "Kd"],
+            3: ["3c", "8s"],
+        }
+        original_active = [1, 2, 3]
+        tokens, remaining = simulator._preflop_betting_round(hands, original_active, 20)
+        self.assertEqual(original_active, [1, 2, 3])
+        self.assertNotEqual(remaining, original_active)
 
     def test_generate_poker_dataset_seed_is_reproducible(self):
         first = list(generate_poker_dataset(n_hands=2, seed=123))
@@ -432,6 +457,18 @@ class TestUniversalGameParsers(unittest.TestCase):
                 "seat:p1", "act:post_ante", "AMT:1", "AMT:0",
                 "seat:p2", "act:post_ante", "AMT:1", "AMT:0",
                 "seat:p1", "act:raise", "AMT:6", "AMT:0",
+                "<eos>",
+            ],
+            "metadata": {"seat_count": 2, "view_type": "complete"},
+        })
+
+    def test_validate_entry_accepts_amount_token_immediately_before_eos(self):
+        validate_entry({
+            "game": "poker",
+            "tokens": [
+                "<bos>", "<poker>", "view_complete",
+                "seat:p1", "act:post_blind", "AMT:2", "AMT:0",
+                "seat:p2", "act:raise", "AMT:6", "AMT:0",
                 "<eos>",
             ],
             "metadata": {"seat_count": 2, "view_type": "complete"},
@@ -624,6 +661,8 @@ HA H2 H7 H3
         from src.mahjonglm_compat import normalize_mahjonglm_metadata
         with self.assertRaises(ValueError):
             normalize_mahjonglm_metadata(row)
+        row["metadata"] = {"seat_count": 0}
+        self.assertEqual(normalize_mahjonglm_metadata(row)["seat_count"], 0)
 
     def test_mahjonglm_tokenizer_rejects_sparse_or_duplicate_ids(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1042,6 +1081,26 @@ actions = [
 [Deal "N:AKQJ.543.2.98765 T987.2.AKQJ.T432 6543.AKQJ.43.AKQ 2.T9876.T98765.J"]
 [Auction "N"]
 1H X Pass Pass XX Pass Pass Pass
+"""
+        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".pbn") as f:
+            f.write(mock_pbn)
+            temp_path = f.name
+        try:
+            boards = list(parse_pbn_to_tokens(temp_path))
+            self.assertEqual(len(boards), 6)
+            for tokens, meta in boards:
+                validate_entry({"game": "bridge", "tokens": tokens, "metadata": meta})
+        finally:
+            os.remove(temp_path)
+
+    def test_bridge_parser_accepts_incomplete_auction_without_play(self):
+        mock_pbn = """[Event "Partial Auction"]
+[Date "2025.01.02"]
+[Dealer "N"]
+[Vulnerable "None"]
+[Deal "N:AKQJ.543.2.98765 T987.2.AKQJ.T432 6543.AKQJ.43.AKQ 2.T9876.T98765.J"]
+[Auction "N"]
+1H Pass 2H Pass
 """
         with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".pbn") as f:
             f.write(mock_pbn)

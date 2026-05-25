@@ -261,6 +261,7 @@ def parse_othello_hf_dataset(dataset_id, split="train", max_games=None):
         parsed += 1
         yield tokens, {
             "source": dataset_id,
+            "source_path": f"hf://{dataset_id}:{split}",
             "split": split,
             "row": row_number,
             "move_count": othello_move_count(tokens),

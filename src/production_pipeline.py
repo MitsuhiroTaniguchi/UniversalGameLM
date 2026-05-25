@@ -80,7 +80,7 @@ class ProductionDatasetError(RuntimeError):
 
 
 def _next_token_has_prefix(tokens, index, prefix):
-    return index + 1 < len(tokens) - 1 and tokens[index + 1].startswith(prefix)
+    return index + 1 < len(tokens) and tokens[index + 1].startswith(prefix)
 
 
 def validate_poker_public_sequence(tokens):
@@ -394,7 +394,7 @@ def validate_entry(entry):
                 continue
             raise ProductionDatasetError(f"Invalid bridge token: {token}")
         try:
-            validate_bridge_auction(calls, dealer)
+            validate_bridge_auction(calls, dealer, require_terminated=bool(played_cards))
             if played_cards and play_leader:
                 expected_seats = bridge_expected_play_seats(played_cards, play_leader, trump_suit)
                 if played_seats != expected_seats:
