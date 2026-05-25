@@ -127,12 +127,19 @@ def limit_entries(entries, game, max_records=None):
     grouped_views = game in {"poker", "bridge"}
     emitted = 0
     emitted_groups = 0
+    allow_current_group = False
     for entry in entries:
-        if (emitted_groups if grouped_views else emitted) >= max_records:
-            return
         metadata = entry.get("metadata") or {}
-        if grouped_views and (metadata.get("view_type") == "complete" or not metadata.get("view_type")):
+        starts_group = grouped_views and (metadata.get("view_type") == "complete" or not metadata.get("view_type"))
+        if not grouped_views and emitted >= max_records:
+            return
+        if grouped_views and starts_group:
+            if emitted_groups >= max_records:
+                return
             emitted_groups += 1
+            allow_current_group = True
+        elif grouped_views and not allow_current_group:
+            return
         emitted += 1
         yield entry
 
@@ -156,7 +163,7 @@ def validate_entry(entry):
         for token in tokens[2:-1]:
             if token.startswith("VARIANT:"):
                 variant = token.split(":", 1)[1]
-                if variant in {"chess960", "fischerandom", "fischer_random"}:
+                if variant in {"chess960", "chess_960", "fischerandom", "fischer_random"}:
                     board = chess.Board(chess960=True)
                 elif variant not in {"chess", "standard"}:
                     raise ProductionDatasetError(f"Unsupported chess variant token: {token}")

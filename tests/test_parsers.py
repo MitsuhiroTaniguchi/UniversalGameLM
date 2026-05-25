@@ -9,9 +9,10 @@ from unittest import mock
 from src.chess_parser import parse_pgn_to_tokens
 from src.shogi_parser import parse_csa_to_tokens, parse_shogi_directory
 from src.go_parser import parse_sgf_to_tokens
-from src.othello_parser import parse_othello_pgn_to_tokens, validate_othello_moves
+from src.othello_parser import parse_othello_jsonl_to_tokens, parse_othello_pgn_to_tokens, validate_othello_moves
 from src.poker_parser import PokerHandSimulator
 from src.poker_parser import generate_poker_dataset
+from src.poker_parser import poker_action_count
 from src.poker_parser import parse_phh_to_tokens
 from src.bridge_parser import parse_bridge_inputs, parse_pbn_to_tokens
 from src.tokenizer import UniversalGameTokenizer
@@ -212,6 +213,20 @@ class TestUniversalGameParsers(unittest.TestCase):
         canonical = validate_othello_moves(moves_without_passes)
         self.assertEqual(canonical[-2:], ["pass", "pass"])
 
+    def test_othello_jsonl_direct_parser_sets_view_metadata(self):
+        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".jsonl") as f:
+            f.write(json.dumps({"moves": TERMINAL_OTHELLO_MOVES}) + "\n")
+            temp_path = f.name
+        try:
+            entries = list(parse_othello_jsonl_to_tokens(temp_path))
+            self.assertEqual(len(entries), 1)
+            _, meta = entries[0]
+            self.assertEqual(meta["seat_count"], 2)
+            self.assertEqual(meta["view_type"], "complete")
+            self.assertIsNone(meta["viewer_seat"])
+        finally:
+            os.remove(temp_path)
+
     def test_validate_entry_rejects_illegal_shogi_moves(self):
         with self.assertRaises(ProductionDatasetError):
             validate_entry({
@@ -243,6 +258,8 @@ class TestUniversalGameParsers(unittest.TestCase):
         self.assertIsNotNone(meta["winner"])
         validate_entry({"game": "poker", "tokens": tokens, "metadata": meta})
         self.assertEqual(meta["source"], "synthetic_simulator")
+        self.assertEqual(meta["move_count"], poker_action_count(tokens))
+        self.assertLess(meta["move_count"], len(tokens))
         street_has_bet = False
         in_postflop_street = False
         for token in tokens:
@@ -298,13 +315,18 @@ class TestUniversalGameParsers(unittest.TestCase):
         tokens, remaining = simulator._postflop_betting_round(
             [1, 2, 3, 4],
             should_bet=lambda seat: seat == 1,
-            should_continue=lambda seat: seat in {1, 2},
-            should_raise=lambda seat: seat == 2,
+            should_continue=lambda seat: seat in {1, 2, 3},
+            should_raise=lambda seat: seat == 3,
             bet_amount=40,
         )
         self.assertIn("act:raise", tokens)
         self.assertIn("act:fold", tokens)
-        self.assertEqual(remaining, [1, 2])
+        self.assertEqual(remaining, [1, 2, 3])
+        p2_call_positions = [
+            index for index, token in enumerate(tokens[:-1])
+            if token == "seat:p2" and tokens[index + 1] == "act:call"
+        ]
+        self.assertEqual(len(p2_call_positions), 2)
 
     def test_poker_score_compares_tie_breakers(self):
         simulator = PokerHandSimulator()
@@ -317,6 +339,13 @@ class TestUniversalGameParsers(unittest.TestCase):
         simulator = PokerHandSimulator()
         score = simulator._score_key(simulator._eval_hand(["Kh", "Kd", "Ks", "5c", "5d", "5h", "2s"]))
         self.assertEqual(score, (6, 13, 5))
+
+    def test_validate_entry_accepts_chess960_spaced_variant_token(self):
+        validate_entry({
+            "game": "chess",
+            "tokens": ["<bos>", "<chess>", "VARIANT:chess_960", "<eos>"],
+            "metadata": {"seat_count": 2, "view_type": "complete"},
+        })
 
     def test_bridge_pbn_parser(self):
         mock_pbn = """[Event "World Championship"]
@@ -794,6 +823,7 @@ actions = [
             complete_tokens, complete_meta = views["complete"]
             self.assertEqual(complete_meta["seat_count"], 2)
             self.assertEqual(complete_meta["view_rows_per_hand"], 4)
+            self.assertEqual(complete_meta["move_count"], poker_action_count(complete_tokens))
             self.assertIn("view_complete", complete_tokens)
             self.assertIn("VARIANT:nt", complete_tokens)
             self.assertIn("STARTING_STACKS:BEGIN", complete_tokens)
@@ -1067,6 +1097,27 @@ actions = [
                 cached_entries_path=cache_path,
             )
             self.assertEqual(result["rows"], 1)
+
+    def test_cached_entries_preserve_group_under_max_records(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cache_path = os.path.join(temp_dir, "cache.jsonl")
+            rows = [
+                {"game": "poker", "tokens": ["<bos>", "<poker>", "view_complete", "seat:p1", "act:fold", "<eos>"], "metadata": {"seat_count": 2, "view_type": "complete"}},
+                {"game": "poker", "tokens": ["<bos>", "<poker>", "view_imperfect_p1", "private_card:p1:Ah", "seat:p1", "act:fold", "<eos>"], "metadata": {"seat_count": 2, "view_type": "imperfect", "viewer_seat": 1}},
+                {"game": "poker", "tokens": ["<bos>", "<poker>", "view_complete", "seat:p2", "act:fold", "<eos>"], "metadata": {"seat_count": 2, "view_type": "complete"}},
+            ]
+            with open(cache_path, "w", encoding="utf-8") as f:
+                for row in rows:
+                    f.write(json.dumps(row) + "\n")
+            result = build_game_shards(
+                "poker",
+                [],
+                os.path.join(temp_dir, "out"),
+                target_tokens=1,
+                max_records=1,
+                cached_entries_path=cache_path,
+            )
+            self.assertEqual(result["rows"], 2)
 
     def test_mahjonglm_jsonl_shard_uses_compatible_schema(self):
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -11,6 +11,25 @@ VALUES = "23456789TJQKA"
 SUITS = "hdcs"
 FULL_DECK = [f"{v}{s}" for v in VALUES for s in SUITS]
 CARD_RE = re.compile(r"[2-9TJQKA][hdcs]", re.IGNORECASE)
+POKER_MOVE_ACTIONS = {
+    "act:post_small_blind",
+    "act:post_big_blind",
+    "act:post_blind",
+    "act:post_ante",
+    "act:blind",
+    "act:ante",
+    "act:bet",
+    "act:call",
+    "act:check",
+    "act:fold",
+    "act:raise",
+    "act:show",
+    "act:muck",
+}
+
+
+def poker_action_count(tokens):
+    return sum(1 for token in tokens if token in POKER_MOVE_ACTIONS)
 
 class PokerHandSimulator:
     """
@@ -142,23 +161,30 @@ class PokerHandSimulator:
         tokens.extend([f"seat:p{bettor}", "act:bet"] + _number_digit_tokens("AMT", bet_amount))
         current_amount = bet_amount
         raised_by = None
-        for seat in order[bettor_index + 1:] + order[:bettor_index]:
+        action_order = order[bettor_index + 1:] + order[:bettor_index]
+        acted_before_raise = []
+        for seat in action_order:
             if raised_by is None and should_raise(seat):
                 current_amount = bet_amount * 2
                 raised_by = seat
                 tokens.extend([f"seat:p{seat}", "act:raise"] + _number_digit_tokens("AMT", current_amount))
             elif should_continue(seat):
                 tokens.extend([f"seat:p{seat}", "act:call"] + _number_digit_tokens("AMT", current_amount))
+                if raised_by is None:
+                    acted_before_raise.append(seat)
             else:
                 tokens.extend([f"seat:p{seat}", "act:fold"])
                 remaining.remove(seat)
 
-        if raised_by is not None and bettor in remaining:
-            if should_continue(bettor):
-                tokens.extend([f"seat:p{bettor}", "act:call"] + _number_digit_tokens("AMT", current_amount))
-            else:
-                tokens.extend([f"seat:p{bettor}", "act:fold"])
-                remaining.remove(bettor)
+        if raised_by is not None:
+            for seat in [bettor] + acted_before_raise:
+                if seat not in remaining:
+                    continue
+                if should_continue(seat):
+                    tokens.extend([f"seat:p{seat}", "act:call"] + _number_digit_tokens("AMT", current_amount))
+                else:
+                    tokens.extend([f"seat:p{seat}", "act:fold"])
+                    remaining.remove(seat)
         return tokens, remaining
 
     def simulate_hand(self, return_state=False):
@@ -194,6 +220,7 @@ class PokerHandSimulator:
         # Seats 1-6 profiles: 1 is SB, 2 is BB, 3 is UTG, 4 is HJ, 5 is CO, 6 is BTN
         preflop_order = [seat for seat in list(range(3, self.num_seats + 1)) + [1, 2] if seat in active_players]
         preflop_raised = False
+        preflop_raise_amount = bb_amt
         for s in preflop_order:
             if s not in active_players:
                 continue
@@ -207,17 +234,18 @@ class PokerHandSimulator:
             if s == 2:
                 if preflop_raised:
                     if is_strong or is_pair:
-                        action_tokens = ["act:call"] + _number_digit_tokens("AMT", 60)
+                        action_tokens = ["act:call"] + _number_digit_tokens("AMT", preflop_raise_amount)
                     else:
                         action_tokens = ["act:fold"]
                         active_players.remove(s)
                 else:
                     action_tokens = ["act:check"]
             elif is_pair and card1_val in "AKQJ":
-                action_tokens = ["act:raise"] + _number_digit_tokens("AMT", 60)
+                preflop_raise_amount = 60
+                action_tokens = ["act:raise"] + _number_digit_tokens("AMT", preflop_raise_amount)
                 preflop_raised = True
             elif is_strong or is_pair:
-                amount = 60 if preflop_raised else bb_amt
+                amount = preflop_raise_amount if preflop_raised else bb_amt
                 action_tokens = ["act:call"] + _number_digit_tokens("AMT", amount)
             else:
                 action_tokens = ["act:fold"]
@@ -288,7 +316,7 @@ class PokerHandSimulator:
             "seat_count": self.num_seats,
             "view_type": "complete",
             "viewer_seat": None,
-            "move_count": len(public_tokens),
+            "move_count": poker_action_count(public_tokens),
         }
         if return_state:
             return tokens, metadata, hands, deck
@@ -718,7 +746,7 @@ def poker_view_entries(actions, state_tokens):
         "seat_count": player_count,
         "player_count": player_count,
         "view_rows_per_hand": view_rows_per_hand,
-        "move_count": len(public_actions),
+        "move_count": poker_action_count(public_actions),
         "private_actions_excluded": private_excluded,
         "completion_policy": "observed_private_only_v1",
         "missing_private_seats": missing_private_seats,

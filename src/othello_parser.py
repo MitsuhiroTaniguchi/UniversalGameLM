@@ -232,6 +232,9 @@ def parse_othello_jsonl_to_tokens(jsonl_path, max_games=None):
                 "row": line_number,
                 "move_count": len(tokens) - 3,
                 "source_path": str(Path(jsonl_path).resolve()),
+                "seat_count": 2,
+                "view_type": "complete",
+                "viewer_seat": None,
             }
             if max_games and parsed >= max_games:
                 break
