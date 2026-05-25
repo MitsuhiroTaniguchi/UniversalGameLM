@@ -656,10 +656,10 @@ HA H2 H7 H3
 
     def test_validate_entry_bounds_poker_imperfect_private_cards(self):
         one_card = ["<bos>", "<poker>", "view_imperfect_p1", "private_card:p1:Ah", "seat:p1", "act:fold", "<eos>"]
-        validate_entry({"game": "poker", "tokens": one_card, "metadata": {"view_type": "imperfect"}})
+        validate_entry({"game": "poker", "tokens": one_card, "metadata": {"seat_count": 2, "view_type": "imperfect"}})
         too_many = ["<bos>", "<poker>", "view_imperfect_p1"] + [f"private_card:p1:{rank}h" for rank in "A23456789TJ"] + ["seat:p1", "act:fold", "<eos>"]
         with self.assertRaises(ProductionDatasetError):
-            validate_entry({"game": "poker", "tokens": too_many, "metadata": {"view_type": "imperfect"}})
+            validate_entry({"game": "poker", "tokens": too_many, "metadata": {"seat_count": 2, "view_type": "imperfect"}})
 
     def test_phh_parser_only_reads_actions_field(self):
         with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".phh") as f:

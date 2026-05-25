@@ -60,7 +60,8 @@ def validate_go_token_sequence(tokens):
             continue
         seen_setup = False
         if token in {"b:pass", "w:pass"}:
-            position_history = [_board_position_key(board)]
+            if not use_positional_superko:
+                position_history = [_board_position_key(board)]
             continue
         if token.startswith(("b:", "w:")):
             color, point = token.split(":", 1)

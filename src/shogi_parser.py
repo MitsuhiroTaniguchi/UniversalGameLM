@@ -92,6 +92,10 @@ def _date_from_csa(csa_text):
     for line in csa_text.splitlines():
         if line.startswith("$START_TIME:"):
             return line.split(":", 1)[1][:10].replace("/", ".").replace("-", ".")
+        if line.startswith("$EVENT:"):
+            match = re.search(r"\d{4}[-/.]\d{1,2}[-/.]\d{1,2}", line)
+            if match:
+                return match.group(0).replace("/", ".").replace("-", ".")
     return None
 
 

@@ -221,6 +221,8 @@ class PokerHandSimulator:
         preflop_order = [seat for seat in list(range(3, self.num_seats + 1)) + [1, 2] if seat in active_players]
         preflop_raised = False
         preflop_raise_amount = bb_amt
+        preflop_raiser = None
+        acted_before_preflop_raise = []
         for s in preflop_order:
             if s not in active_players:
                 continue
@@ -233,25 +235,52 @@ class PokerHandSimulator:
             
             if s == 2:
                 if preflop_raised:
-                    if is_strong or is_pair:
+                    if is_pair and card1_val in "AKQ":
+                        preflop_raise_amount *= 2
+                        preflop_raiser = s
+                        action_tokens = ["act:raise"] + _number_digit_tokens("AMT", preflop_raise_amount)
+                    elif is_strong or is_pair:
                         action_tokens = ["act:call"] + _number_digit_tokens("AMT", preflop_raise_amount)
                     else:
                         action_tokens = ["act:fold"]
                         active_players.remove(s)
                 else:
-                    action_tokens = ["act:check"]
+                    if is_pair and card1_val in "AKQ":
+                        preflop_raise_amount = 60
+                        preflop_raiser = s
+                        action_tokens = ["act:raise"] + _number_digit_tokens("AMT", preflop_raise_amount)
+                        preflop_raised = True
+                    else:
+                        action_tokens = ["act:check"]
             elif is_pair and card1_val in "AKQJ":
                 preflop_raise_amount = 60
                 action_tokens = ["act:raise"] + _number_digit_tokens("AMT", preflop_raise_amount)
                 preflop_raised = True
+                preflop_raiser = s
             elif is_strong or is_pair:
                 amount = preflop_raise_amount if preflop_raised else bb_amt
                 action_tokens = ["act:call"] + _number_digit_tokens("AMT", amount)
+                if not preflop_raised:
+                    acted_before_preflop_raise.append(s)
             else:
                 action_tokens = ["act:fold"]
                 active_players.remove(s)
                 
             public_tokens.extend([f"seat:p{s}"] + action_tokens)
+
+        if preflop_raised:
+            for s in acted_before_preflop_raise:
+                if s not in active_players or s == preflop_raiser:
+                    continue
+                card1_val = hands[s][0][0]
+                card2_val = hands[s][1][0]
+                is_strong = any(v in "AKQJT" for v in [card1_val, card2_val])
+                is_pair = card1_val == card2_val
+                if is_strong or is_pair:
+                    public_tokens.extend([f"seat:p{s}", "act:call"] + _number_digit_tokens("AMT", preflop_raise_amount))
+                else:
+                    public_tokens.extend([f"seat:p{s}", "act:fold"])
+                    active_players.remove(s)
             
         # Flop betting round (if at least 2 active players left)
         if len(active_players) >= 2:
@@ -271,15 +300,29 @@ class PokerHandSimulator:
         if len(active_players) >= 2:
             turn = [deck.pop()]
             public_tokens.extend(["act:turn", f"card:{turn[0]}"])
-            for s in list(active_players):
-                public_tokens.extend([f"seat:p{s}", "act:check"])
+            turn_rank = turn[0][0]
+            turn_bettor = next(
+                (seat for seat in active_players if any(card[0] == turn_rank for card in hands[seat])),
+                None,
+            )
+            round_tokens, active_players = self._postflop_betting_round(
+                active_players,
+                lambda seat: seat == turn_bettor,
+                lambda seat: any(card[0] in "AKQJT" for card in hands[seat]) or any(card[0] == turn_rank for card in hands[seat]),
+                lambda seat: hands[seat][0][0] == hands[seat][1][0] and hands[seat][0][0] in "AKQ",
+                80,
+            )
+            public_tokens.extend(round_tokens)
                 
         # River betting round
         if len(active_players) >= 2:
             river = [deck.pop()]
             public_tokens.extend(["act:river", f"card:{river[0]}"])
-            river_bettor = active_players[0]
             river_rank = river[0][0]
+            river_bettor = next(
+                (seat for seat in active_players if any(card[0] == river_rank for card in hands[seat])),
+                active_players[0],
+            )
             round_tokens, active_players = self._postflop_betting_round(
                 active_players,
                 lambda seat: seat == river_bettor,

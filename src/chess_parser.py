@@ -106,11 +106,11 @@ def parse_pgn_to_tokens(pgn_path, max_games=None):
             if not legal:
                 continue
 
-            tokens.append("<eos>")
-
             # Quality Filter: Skip extremely short or empty games
             if move_count < 4:
                 continue
+
+            tokens.append("<eos>")
 
             games_parsed += 1
             

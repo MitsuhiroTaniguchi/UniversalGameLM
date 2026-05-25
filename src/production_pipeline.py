@@ -157,6 +157,11 @@ def validate_entry(entry):
         raise ProductionDatasetError(f"{game} sequence has wrong game marker: {tokens[1]}")
     if any(not isinstance(token, str) or not token for token in tokens):
         raise ProductionDatasetError(f"{game} sequence contains an invalid token")
+    metadata = entry.get("metadata") or {}
+    if metadata.get("seat_count") is None:
+        raise ProductionDatasetError(f"{game} entry is missing metadata.seat_count")
+    if metadata.get("view_type") is None:
+        raise ProductionDatasetError(f"{game} entry is missing metadata.view_type")
     if game == "chess":
         board = chess.Board()
         variant = None
@@ -201,7 +206,7 @@ def validate_entry(entry):
             raise ProductionDatasetError("Poker entry is missing a view token")
         if any(pattern.search(token) for token in tokens for pattern in PRIVATE_POKER_TOKEN_PATTERNS):
             raise ProductionDatasetError("Poker entry leaks raw private hole-card tokens")
-        view_type = (entry.get("metadata") or {}).get("view_type")
+        view_type = metadata.get("view_type")
         if tokens[2] == "view_complete":
             if view_type not in (None, "complete"):
                 raise ProductionDatasetError("Poker complete view metadata mismatch")

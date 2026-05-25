@@ -114,7 +114,7 @@ def _parse_headers(block):
 def _strip_headers_and_comments(block):
     body_lines = [line for line in block.splitlines() if not line.strip().startswith("[")]
     body = "\n".join(body_lines)
-    body = re.sub(r"\{[^}]*\}", " ", body)
+    body = re.sub(r"\{[^}]*\}", " ", body, flags=re.DOTALL)
     body = re.sub(r";[^\n]*", " ", body)
     return body
 
