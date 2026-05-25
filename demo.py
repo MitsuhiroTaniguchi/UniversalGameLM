@@ -104,7 +104,8 @@ def iter_synthetic_entries():
         return
 
     n_hands = env_int("POKER_SYNTHETIC_HANDS", 100)
-    for tokens, meta in generate_poker_dataset(n_hands=n_hands):
+    seed = env_optional_int("POKER_SYNTHETIC_SEED", None)
+    for tokens, meta in generate_poker_dataset(n_hands=n_hands, seed=seed):
         yield {"game": "poker", "tokens": tokens, "metadata": meta}
 
 def iter_dataset_entries():

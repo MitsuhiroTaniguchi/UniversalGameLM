@@ -36,9 +36,10 @@ class PokerHandSimulator:
     Simulates No-Limit Texas Hold'em hands with realistic players
     and generates unified action/state tokens.
     """
-    def __init__(self, num_seats=6):
+    def __init__(self, num_seats=6, seed=None):
         self.num_seats = num_seats
         self.deck = [f"{v}{s}" for v in VALUES for s in SUITS]
+        self.rng = random.Random(seed) if seed is not None else None
 
     def _eval_hand(self, cards):
         """
@@ -180,7 +181,7 @@ class PokerHandSimulator:
             for seat in [bettor] + acted_before_raise:
                 if seat not in remaining:
                     continue
-                if seat == bettor or should_continue(seat):
+                if should_continue(seat):
                     tokens.extend([f"seat:p{seat}", "act:call"] + _number_digit_tokens("AMT", current_amount))
                 else:
                     tokens.extend([f"seat:p{seat}", "act:fold"])
@@ -239,7 +240,10 @@ class PokerHandSimulator:
         """Simulates one No-Limit Hold'em hand and yields tokens."""
         # Shuffle deck
         deck = list(self.deck)
-        random.shuffle(deck)
+        if self.rng is None:
+            random.shuffle(deck)
+        else:
+            self.rng.shuffle(deck)
         
         # 1. Deal Hole Cards to active seats (we use seats 1 to 6)
         hands = {}
@@ -384,11 +388,11 @@ class PokerHandSimulator:
             {**base_metadata, "view_type": "omniscient", "viewer_seat": None},
         )
 
-def generate_poker_dataset(n_hands=100):
+def generate_poker_dataset(n_hands=100, seed=None):
     """
     Generates a dataset of simulated No-Limit Texas Hold'em hands.
     """
-    simulator = PokerHandSimulator()
+    simulator = PokerHandSimulator(seed=seed)
     print(f"[Simulating Poker] Generating {n_hands} Hold'em hand histories...")
     for _ in range(n_hands):
         yield from simulator.simulate_hand_views()

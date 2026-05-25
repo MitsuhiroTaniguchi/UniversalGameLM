@@ -132,6 +132,7 @@ def validate_poker_public_sequence(tokens):
                 "act:post_small_blind",
                 "act:post_big_blind",
                 "act:post_blind",
+                "act:post_ante",
                 "act:blind",
                 "act:ante",
             }:
@@ -166,10 +167,10 @@ def iter_game_entries(game, input_paths, max_records=None):
     emitted_groups = 0
     grouped_views = game in {"poker", "bridge"}
     for input_path in input_paths:
-        if max_records and (emitted_groups if grouped_views else emitted) >= max_records:
+        if max_records is not None and (emitted_groups if grouped_views else emitted) >= max_records:
             return
         remaining = None
-        if max_records:
+        if max_records is not None:
             remaining = max_records - (emitted_groups if grouped_views else emitted)
         path = Path(input_path)
         if game == "chess":
@@ -208,7 +209,7 @@ def iter_game_entries(game, input_paths, max_records=None):
                     "ingestion_version": 2,
                 },
             }
-            if max_records and not grouped_views and emitted >= max_records:
+            if max_records is not None and not grouped_views and emitted >= max_records:
                 return
 
 
@@ -220,7 +221,7 @@ def iter_cached_entries(cache_path):
 
 
 def limit_entries(entries, game, max_records=None):
-    if not max_records:
+    if max_records is None:
         yield from entries
         return
     grouped_views = game in {"poker", "bridge"}

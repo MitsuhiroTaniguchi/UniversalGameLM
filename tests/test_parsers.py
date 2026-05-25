@@ -21,6 +21,7 @@ from src.hf_uploader import HuggingFaceShardUploader
 from src.production_pipeline import (
     assert_source_allowed_for_primary_build,
     build_game_shards,
+    limit_entries,
     load_source_catalog,
     validate_entry,
     ProductionDatasetError,
@@ -347,6 +348,20 @@ class TestUniversalGameParsers(unittest.TestCase):
         )
         self.assertEqual(check_remaining, [1, 2, 3])
         self.assertEqual(check_tokens, ["seat:p1", "act:check", "seat:p2", "act:check", "seat:p3", "act:check"])
+        bluff_tokens, bluff_remaining = simulator._postflop_betting_round(
+            [1, 2, 3],
+            should_bet=lambda seat: seat == 1,
+            should_continue=lambda seat: seat != 1,
+            should_raise=lambda seat: seat == 2,
+            bet_amount=40,
+        )
+        self.assertNotIn(1, bluff_remaining)
+        p1_responses = [
+            bluff_tokens[index + 1]
+            for index, token in enumerate(bluff_tokens[:-1])
+            if token == "seat:p1"
+        ]
+        self.assertEqual(p1_responses[-1], "act:fold")
 
     def test_poker_preflop_reraises_increase_amount_and_get_responses(self):
         simulator = PokerHandSimulator(num_seats=4)
@@ -365,6 +380,22 @@ class TestUniversalGameParsers(unittest.TestCase):
         self.assertEqual(first_amount, ["AMT:6", "AMT:0"])
         self.assertEqual(second_amount, ["AMT:1", "AMT:2", "AMT:0"])
         self.assertGreater(tokens.count("act:call"), 2)
+
+    def test_poker_preflop_bb_can_raise_over_limpers(self):
+        simulator = PokerHandSimulator(num_seats=2)
+        hands = {
+            1: ["Ah", "Kd"],
+            2: ["As", "Ad"],
+        }
+        tokens, remaining = simulator._preflop_betting_round(hands, [1, 2], 20)
+        self.assertEqual(remaining, [1, 2])
+        p2_index = tokens.index("seat:p2")
+        self.assertEqual(tokens[p2_index + 1], "act:raise")
+
+    def test_generate_poker_dataset_seed_is_reproducible(self):
+        first = list(generate_poker_dataset(n_hands=2, seed=123))
+        second = list(generate_poker_dataset(n_hands=2, seed=123))
+        self.assertEqual(first, second)
 
     def test_poker_score_compares_tie_breakers(self):
         simulator = PokerHandSimulator()
@@ -392,6 +423,19 @@ class TestUniversalGameParsers(unittest.TestCase):
                 "tokens": ["<bos>", "<poker>", "view_complete", "seat:p1", "act:raise", "AMT:6", "AMT:0", "<eos>"],
                 "metadata": {"seat_count": 2, "view_type": "complete"},
             })
+
+    def test_validate_entry_allows_ante_before_betting(self):
+        validate_entry({
+            "game": "poker",
+            "tokens": [
+                "<bos>", "<poker>", "view_complete",
+                "seat:p1", "act:post_ante", "AMT:1", "AMT:0",
+                "seat:p2", "act:post_ante", "AMT:1", "AMT:0",
+                "seat:p1", "act:raise", "AMT:6", "AMT:0",
+                "<eos>",
+            ],
+            "metadata": {"seat_count": 2, "view_type": "complete"},
+        })
 
     def test_bridge_pbn_parser(self):
         mock_pbn = """[Event "World Championship"]
@@ -1164,6 +1208,12 @@ actions = [
                 cached_entries_path=cache_path,
             )
             self.assertEqual(result["rows"], 1)
+
+    def test_limit_entries_zero_records_yields_no_rows(self):
+        rows = [
+            {"game": "chess", "tokens": ["<bos>", "<chess>", "e2e4", "<eos>"], "metadata": {"seat_count": 2, "view_type": "complete"}},
+        ]
+        self.assertEqual(list(limit_entries(rows, "chess", max_records=0)), [])
 
     def test_cached_entries_preserve_group_under_max_records(self):
         with tempfile.TemporaryDirectory() as temp_dir:
