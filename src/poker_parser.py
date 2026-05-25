@@ -180,12 +180,63 @@ class PokerHandSimulator:
             for seat in [bettor] + acted_before_raise:
                 if seat not in remaining:
                     continue
-                if should_continue(seat):
+                if seat == bettor or should_continue(seat):
                     tokens.extend([f"seat:p{seat}", "act:call"] + _number_digit_tokens("AMT", current_amount))
                 else:
                     tokens.extend([f"seat:p{seat}", "act:fold"])
                     remaining.remove(seat)
         return tokens, remaining
+
+    def _preflop_betting_round(self, hands, active_players, bb_amt):
+        order = [seat for seat in list(range(3, self.num_seats + 1)) + [1, 2] if seat in active_players]
+        current_amount = bb_amt
+        acted_remaining = []
+        needs_response = []
+        raise_count = 0
+        tokens = []
+
+        def hand_flags(seat):
+            card1_val = hands[seat][0][0]
+            card2_val = hands[seat][1][0]
+            is_strong = any(v in "AKQJT" for v in [card1_val, card2_val])
+            is_pair = card1_val == card2_val
+            is_premium_pair = is_pair and card1_val in "AKQJ"
+            return is_strong, is_pair, is_premium_pair
+
+        for seat in order:
+            if seat not in active_players:
+                continue
+            is_strong, is_pair, is_premium_pair = hand_flags(seat)
+            can_raise = is_premium_pair and raise_count < 2
+            if can_raise:
+                previous_amount = current_amount
+                current_amount = 60 if current_amount < 60 else current_amount * 2
+                action_tokens = ["act:raise"] + _number_digit_tokens("AMT", current_amount)
+                raise_count += 1
+                needs_response = [s for s in acted_remaining if s != seat]
+                if previous_amount == bb_amt:
+                    needs_response = [s for s in needs_response if s != 2]
+            elif seat == 2 and current_amount == bb_amt:
+                action_tokens = ["act:check"]
+            elif is_strong or is_pair:
+                action_tokens = ["act:call"] + _number_digit_tokens("AMT", current_amount)
+            else:
+                action_tokens = ["act:fold"]
+                active_players.remove(seat)
+            tokens.extend([f"seat:p{seat}"] + action_tokens)
+            if seat in active_players and seat not in acted_remaining:
+                acted_remaining.append(seat)
+
+        for seat in needs_response:
+            if seat not in active_players:
+                continue
+            is_strong, is_pair, _ = hand_flags(seat)
+            if is_strong or is_pair:
+                tokens.extend([f"seat:p{seat}", "act:call"] + _number_digit_tokens("AMT", current_amount))
+            else:
+                tokens.extend([f"seat:p{seat}", "act:fold"])
+                active_players.remove(seat)
+        return tokens, active_players
 
     def simulate_hand(self, return_state=False):
         """Simulates one No-Limit Hold'em hand and yields tokens."""
@@ -216,71 +267,8 @@ class PokerHandSimulator:
         # Simulate Betting Actions across rounds
         active_players = list(range(1, self.num_seats + 1))
         
-        # Pre-flop betting
-        # Seats 1-6 profiles: 1 is SB, 2 is BB, 3 is UTG, 4 is HJ, 5 is CO, 6 is BTN
-        preflop_order = [seat for seat in list(range(3, self.num_seats + 1)) + [1, 2] if seat in active_players]
-        preflop_raised = False
-        preflop_raise_amount = bb_amt
-        preflop_raiser = None
-        acted_before_preflop_raise = []
-        for s in preflop_order:
-            if s not in active_players:
-                continue
-            card1_val = hands[s][0][0]
-            card2_val = hands[s][1][0]
-            
-            # Simple bot logic: fold weak hands
-            is_strong = any(v in "AKQJT" for v in [card1_val, card2_val])
-            is_pair = (card1_val == card2_val)
-            
-            if s == 2:
-                if preflop_raised:
-                    if is_pair and card1_val in "AKQ":
-                        preflop_raise_amount *= 2
-                        preflop_raiser = s
-                        action_tokens = ["act:raise"] + _number_digit_tokens("AMT", preflop_raise_amount)
-                    elif is_strong or is_pair:
-                        action_tokens = ["act:call"] + _number_digit_tokens("AMT", preflop_raise_amount)
-                    else:
-                        action_tokens = ["act:fold"]
-                        active_players.remove(s)
-                else:
-                    if is_pair and card1_val in "AKQ":
-                        preflop_raise_amount = 60
-                        preflop_raiser = s
-                        action_tokens = ["act:raise"] + _number_digit_tokens("AMT", preflop_raise_amount)
-                        preflop_raised = True
-                    else:
-                        action_tokens = ["act:check"]
-            elif is_pair and card1_val in "AKQJ":
-                preflop_raise_amount = 60
-                action_tokens = ["act:raise"] + _number_digit_tokens("AMT", preflop_raise_amount)
-                preflop_raised = True
-                preflop_raiser = s
-            elif is_strong or is_pair:
-                amount = preflop_raise_amount if preflop_raised else bb_amt
-                action_tokens = ["act:call"] + _number_digit_tokens("AMT", amount)
-                if not preflop_raised:
-                    acted_before_preflop_raise.append(s)
-            else:
-                action_tokens = ["act:fold"]
-                active_players.remove(s)
-                
-            public_tokens.extend([f"seat:p{s}"] + action_tokens)
-
-        if preflop_raised:
-            for s in acted_before_preflop_raise:
-                if s not in active_players or s == preflop_raiser:
-                    continue
-                card1_val = hands[s][0][0]
-                card2_val = hands[s][1][0]
-                is_strong = any(v in "AKQJT" for v in [card1_val, card2_val])
-                is_pair = card1_val == card2_val
-                if is_strong or is_pair:
-                    public_tokens.extend([f"seat:p{s}", "act:call"] + _number_digit_tokens("AMT", preflop_raise_amount))
-                else:
-                    public_tokens.extend([f"seat:p{s}", "act:fold"])
-                    active_players.remove(s)
+        preflop_tokens, active_players = self._preflop_betting_round(hands, active_players, bb_amt)
+        public_tokens.extend(preflop_tokens)
             
         # Flop betting round (if at least 2 active players left)
         if len(active_players) >= 2:
@@ -333,9 +321,9 @@ class PokerHandSimulator:
             public_tokens.extend(round_tokens)
                 
         # Showdown & Determine Winner
-        winner = None
+        winners = []
         if len(active_players) == 1:
-            winner = active_players[0]
+            winners = [active_players[0]]
         else:
             # Evaluate hands
             best_score = None
@@ -344,9 +332,12 @@ class PokerHandSimulator:
                 score = self._score_key(self.get_best_hand(hands[s], flop + turn + river))
                 if best_score is None or score > best_score:
                     best_score = score
-                    winner = s
+                    winners = [s]
+                elif score == best_score:
+                    winners.append(s)
                     
-        public_tokens.append(f"winner:p{winner}")
+        for winner in winners:
+            public_tokens.append(f"winner:p{winner}")
         tokens = ["<bos>", "<poker>", "view_complete"] + public_tokens + ["<eos>"]
         
         metadata = {
@@ -354,7 +345,8 @@ class PokerHandSimulator:
             "flop": "".join(flop) or None,
             "turn": turn[0] if turn else None,
             "river": river[0] if river else None,
-            "winner": f"Player {winner}",
+            "winner": "Split" if len(winners) > 1 else f"Player {winners[0]}",
+            "winners": [f"Player {winner}" for winner in winners],
             "source": "synthetic_simulator",
             "seat_count": self.num_seats,
             "view_type": "complete",

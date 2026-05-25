@@ -9,7 +9,7 @@ from unittest import mock
 from src.chess_parser import parse_pgn_to_tokens
 from src.shogi_parser import parse_csa_to_tokens, parse_shogi_directory
 from src.go_parser import parse_sgf_to_tokens
-from src.othello_parser import parse_othello_jsonl_to_tokens, parse_othello_pgn_to_tokens, validate_othello_moves
+from src.othello_parser import othello_move_count, parse_othello_jsonl_to_tokens, parse_othello_pgn_to_tokens, validate_othello_moves
 from src.poker_parser import PokerHandSimulator
 from src.poker_parser import generate_poker_dataset
 from src.poker_parser import poker_action_count
@@ -227,6 +227,17 @@ class TestUniversalGameParsers(unittest.TestCase):
         finally:
             os.remove(temp_path)
 
+    def test_othello_multiline_comments_and_passes_do_not_count_as_moves(self):
+        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".pgn") as f:
+            f.write("""[Event "Othello"]\n[Black "B"]\n[White "W"]\n\n{comment\nwith D3 inside}\n""" + terminal_othello_pgn())
+            temp_path = f.name
+        try:
+            tokens, meta = next(parse_othello_pgn_to_tokens(temp_path))
+            self.assertEqual(meta["move_count"], othello_move_count(tokens))
+            self.assertEqual(meta["move_count"], sum(1 for move in TERMINAL_OTHELLO_MOVES if move != "pass"))
+        finally:
+            os.remove(temp_path)
+
     def test_validate_entry_rejects_illegal_shogi_moves(self):
         with self.assertRaises(ProductionDatasetError):
             validate_entry({
@@ -327,6 +338,24 @@ class TestUniversalGameParsers(unittest.TestCase):
             if token == "seat:p2" and tokens[index + 1] == "act:call"
         ]
         self.assertEqual(len(p2_call_positions), 2)
+
+    def test_poker_preflop_reraises_increase_amount_and_get_responses(self):
+        simulator = PokerHandSimulator(num_seats=4)
+        hands = {
+            1: ["Qh", "Qd"],
+            2: ["Ah", "Kd"],
+            3: ["As", "Ad"],
+            4: ["Kc", "Kh"],
+        }
+        tokens, remaining = simulator._preflop_betting_round(hands, [1, 2, 3, 4], 20)
+        self.assertEqual(remaining, [1, 2, 3, 4])
+        raise_positions = [index for index, token in enumerate(tokens) if token == "act:raise"]
+        self.assertEqual(len(raise_positions), 2)
+        first_amount = tokens[raise_positions[0] + 1:raise_positions[0] + 3]
+        second_amount = tokens[raise_positions[1] + 1:raise_positions[1] + 4]
+        self.assertEqual(first_amount, ["AMT:6", "AMT:0"])
+        self.assertEqual(second_amount, ["AMT:1", "AMT:2", "AMT:0"])
+        self.assertGreater(tokens.count("act:call"), 2)
 
     def test_poker_score_compares_tie_breakers(self):
         simulator = PokerHandSimulator()

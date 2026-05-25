@@ -132,6 +132,10 @@ def tokens_from_othello_moves(moves, require_terminal=True):
     return ["<bos>", "<othello>"] + canonical + ["<eos>"]
 
 
+def othello_move_count(tokens):
+    return sum(1 for token in tokens[2:-1] if token != PASS_TOKEN)
+
+
 def parse_othello_pgn_to_tokens(pgn_path, max_games=None):
     """
     Parses Othello PGN/WTHOR-style text and yields legal move-only token streams.
@@ -181,7 +185,7 @@ def _parse_othello_block(block, source_path):
         "white": headers.get("white", "Unknown"),
         "result": headers.get("result", "*"),
         "date": headers.get("date", "????"),
-        "move_count": len(tokens) - 3,
+        "move_count": othello_move_count(tokens),
         "source_path": str(Path(source_path).resolve()),
         "seat_count": 2,
         "view_type": "complete",
@@ -230,7 +234,7 @@ def parse_othello_jsonl_to_tokens(jsonl_path, max_games=None):
                 "source": "othello_jsonl",
                 "filename": os.path.basename(jsonl_path),
                 "row": line_number,
-                "move_count": len(tokens) - 3,
+                "move_count": othello_move_count(tokens),
                 "source_path": str(Path(jsonl_path).resolve()),
                 "seat_count": 2,
                 "view_type": "complete",
@@ -259,7 +263,7 @@ def parse_othello_hf_dataset(dataset_id, split="train", max_games=None):
             "source": dataset_id,
             "split": split,
             "row": row_number,
-            "move_count": len(tokens) - 3,
+            "move_count": othello_move_count(tokens),
             "seat_count": 2,
             "view_type": "complete",
             "viewer_seat": None,
@@ -287,7 +291,7 @@ def parse_othello_parquet_to_tokens(parquet_path, max_games=None):
             "source": "othello_parquet",
             "filename": os.path.basename(parquet_path),
             "row": row_number,
-            "move_count": len(tokens) - 3,
+            "move_count": othello_move_count(tokens),
             "seat_count": 2,
             "view_type": "complete",
             "viewer_seat": None,

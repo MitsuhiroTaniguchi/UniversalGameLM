@@ -139,7 +139,7 @@ def limit_entries(entries, game, max_records=None):
             emitted_groups += 1
             allow_current_group = True
         elif grouped_views and not allow_current_group:
-            return
+            continue
         emitted += 1
         yield entry
 
@@ -176,7 +176,7 @@ def validate_entry(entry):
             if token.startswith("FEN:"):
                 fen = token.split(":", 1)[1].replace("_", " ")
                 try:
-                    board = chess.Board(fen, chess960=variant in {"chess960", "fischerandom", "fischer_random"})
+                    board = chess.Board(fen, chess960=variant in {"chess960", "chess_960", "fischerandom", "fischer_random"})
                 except ValueError as exc:
                     raise ProductionDatasetError(f"Invalid chess FEN token: {token}") from exc
                 continue
