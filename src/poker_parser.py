@@ -128,21 +128,38 @@ class PokerHandSimulator:
             tie_breakers = tuple(flattened)
         return (rank, *tie_breakers)
 
-    def _postflop_betting_round(self, active_players, should_bet, bet_amount, response_amount=None):
+    def _postflop_betting_round(self, active_players, should_bet, should_continue, should_raise, bet_amount):
         order = list(active_players)
         bettor = next((seat for seat in order if should_bet(seat)), None)
         if bettor is None:
-            return [token for seat in order for token in (f"seat:p{seat}", "act:check")]
+            return [token for seat in order for token in (f"seat:p{seat}", "act:check")], order
 
         tokens = []
+        remaining = list(order)
         bettor_index = order.index(bettor)
         for seat in order[:bettor_index]:
             tokens.extend([f"seat:p{seat}", "act:check"])
         tokens.extend([f"seat:p{bettor}", "act:bet"] + _number_digit_tokens("AMT", bet_amount))
-        call_amount = response_amount if response_amount is not None else bet_amount
+        current_amount = bet_amount
+        raised_by = None
         for seat in order[bettor_index + 1:] + order[:bettor_index]:
-            tokens.extend([f"seat:p{seat}", "act:call"] + _number_digit_tokens("AMT", call_amount))
-        return tokens
+            if raised_by is None and should_raise(seat):
+                current_amount = bet_amount * 2
+                raised_by = seat
+                tokens.extend([f"seat:p{seat}", "act:raise"] + _number_digit_tokens("AMT", current_amount))
+            elif should_continue(seat):
+                tokens.extend([f"seat:p{seat}", "act:call"] + _number_digit_tokens("AMT", current_amount))
+            else:
+                tokens.extend([f"seat:p{seat}", "act:fold"])
+                remaining.remove(seat)
+
+        if raised_by is not None and bettor in remaining:
+            if should_continue(bettor):
+                tokens.extend([f"seat:p{bettor}", "act:call"] + _number_digit_tokens("AMT", current_amount))
+            else:
+                tokens.extend([f"seat:p{bettor}", "act:fold"])
+                remaining.remove(bettor)
+        return tokens, remaining
 
     def simulate_hand(self, return_state=False):
         """Simulates one No-Limit Hold'em hand and yields tokens."""
@@ -164,10 +181,11 @@ class PokerHandSimulator:
         public_tokens.extend(["act:preflop", "seat:p1", "act:post_small_blind"] + _number_digit_tokens("AMT", sb_amt))
         public_tokens.extend(["seat:p2", "act:post_big_blind"] + _number_digit_tokens("AMT", bb_amt))
         
-        # Community Cards
-        flop = [deck.pop(), deck.pop(), deck.pop()]
-        turn = [deck.pop()]
-        river = [deck.pop()]
+        # Community cards are dealt only when the street is reached. If everyone
+        # folds preflop, those cards remain in the undealt deck for omniscient views.
+        flop = []
+        turn = []
+        river = []
         
         # Simulate Betting Actions across rounds
         active_players = list(range(1, self.num_seats + 1))
@@ -198,25 +216,39 @@ class PokerHandSimulator:
             
         # Flop betting round (if at least 2 active players left)
         if len(active_players) >= 2:
+            flop = [deck.pop(), deck.pop(), deck.pop()]
             public_tokens.extend(["act:flop"] + [f"card:{card}" for card in flop])
             flop_ranks = {card[0] for card in flop}
-            public_tokens.extend(self._postflop_betting_round(
+            round_tokens, active_players = self._postflop_betting_round(
                 active_players,
                 lambda seat: hands[seat][0][0] in flop_ranks or hands[seat][1][0] in flop_ranks,
+                lambda seat: any(card[0] in "AKQJT" for card in hands[seat]) or any(card[0] in flop_ranks for card in hands[seat]),
+                lambda seat: hands[seat][0][0] == hands[seat][1][0] and hands[seat][0][0] in "AKQJT",
                 40,
-            ))
+            )
+            public_tokens.extend(round_tokens)
                 
         # Turn betting round
         if len(active_players) >= 2:
+            turn = [deck.pop()]
             public_tokens.extend(["act:turn", f"card:{turn[0]}"])
             for s in list(active_players):
                 public_tokens.extend([f"seat:p{s}", "act:check"])
                 
         # River betting round
         if len(active_players) >= 2:
+            river = [deck.pop()]
             public_tokens.extend(["act:river", f"card:{river[0]}"])
             river_bettor = active_players[0]
-            public_tokens.extend(self._postflop_betting_round(active_players, lambda seat: seat == river_bettor, 100))
+            river_rank = river[0][0]
+            round_tokens, active_players = self._postflop_betting_round(
+                active_players,
+                lambda seat: seat == river_bettor,
+                lambda seat: any(card[0] in "AKQJT" for card in hands[seat]) or any(card[0] == river_rank for card in hands[seat]),
+                lambda seat: hands[seat][0][0] == hands[seat][1][0] and hands[seat][0][0] in "AKQ",
+                100,
+            )
+            public_tokens.extend(round_tokens)
                 
         # Showdown & Determine Winner
         winner = None
@@ -237,9 +269,9 @@ class PokerHandSimulator:
         
         metadata = {
             "num_players": self.num_seats,
-            "flop": "".join(flop),
-            "turn": turn[0],
-            "river": river[0],
+            "flop": "".join(flop) or None,
+            "turn": turn[0] if turn else None,
+            "river": river[0] if river else None,
             "winner": f"Player {winner}",
             "source": "synthetic_simulator",
             "seat_count": self.num_seats,

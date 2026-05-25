@@ -273,9 +273,8 @@ def _bridge_block_to_tokens(block, source_path):
         return None
 
     context_tokens = []
-    dealer = tags.get("Dealer")
     if dealer:
-        context_tokens.append(f"dealer:{dealer.upper()}")
+        context_tokens.append(f"dealer:{dealer}")
     vulnerable = tags.get("Vulnerable")
     if vulnerable:
         context_tokens.append(f"vul:{vulnerable.upper().replace(' ', '_')}")

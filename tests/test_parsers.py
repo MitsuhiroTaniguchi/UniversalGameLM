@@ -5,6 +5,7 @@ import zipfile
 import gzip
 import json
 import re
+from unittest import mock
 from src.chess_parser import parse_pgn_to_tokens
 from src.shogi_parser import parse_csa_to_tokens, parse_shogi_directory
 from src.go_parser import parse_sgf_to_tokens
@@ -251,6 +252,33 @@ class TestUniversalGameParsers(unittest.TestCase):
             validate_entry({"game": "poker", "tokens": tokens, "metadata": meta})
         self.assertTrue(any(token.startswith("private_card:") for token in entries[-1][0]))
         self.assertTrue(any(token.startswith("undealt_card:") for token in entries[-1][0]))
+
+    def test_poker_simulator_omniscient_keeps_undealt_board_cards_after_prefold(self):
+        def rig_shuffle(deck):
+            for card in ["2h", "3d", "Ah", "Ad"]:
+                deck.remove(card)
+            deck.extend(["Ad", "Ah", "3d", "2h"])
+
+        with mock.patch("src.poker_parser.random.shuffle", rig_shuffle):
+            entries = list(PokerHandSimulator(num_seats=2).simulate_hand_views())
+        omniscient = entries[-1][0]
+        self.assertNotIn("act:flop", omniscient)
+        self.assertEqual(sum(token.startswith("private_card:") for token in omniscient), 4)
+        self.assertEqual(sum(token.startswith("undealt_card:") for token in omniscient), 48)
+        validate_entry({"game": "poker", "tokens": omniscient, "metadata": entries[-1][1]})
+
+    def test_poker_postflop_simulator_can_fold_and_raise_legally(self):
+        simulator = PokerHandSimulator(num_seats=4)
+        tokens, remaining = simulator._postflop_betting_round(
+            [1, 2, 3, 4],
+            should_bet=lambda seat: seat == 1,
+            should_continue=lambda seat: seat in {1, 2},
+            should_raise=lambda seat: seat == 2,
+            bet_amount=40,
+        )
+        self.assertIn("act:raise", tokens)
+        self.assertIn("act:fold", tokens)
+        self.assertEqual(remaining, [1, 2])
 
     def test_poker_score_compares_tie_breakers(self):
         simulator = PokerHandSimulator()
@@ -571,6 +599,13 @@ HA H2 H7 H3
                 with self.assertRaises(ProductionDatasetError):
                     validate_entry({"game": "poker", "tokens": ["<bos>", "<poker>", token, "<eos>"]})
 
+    def test_validate_entry_bounds_poker_imperfect_private_cards(self):
+        one_card = ["<bos>", "<poker>", "view_imperfect_p1", "private_card:p1:Ah", "seat:p1", "act:fold", "<eos>"]
+        validate_entry({"game": "poker", "tokens": one_card, "metadata": {"view_type": "imperfect"}})
+        too_many = ["<bos>", "<poker>", "view_imperfect_p1"] + [f"private_card:p1:{rank}h" for rank in "A23456789TJ"] + ["seat:p1", "act:fold", "<eos>"]
+        with self.assertRaises(ProductionDatasetError):
+            validate_entry({"game": "poker", "tokens": too_many, "metadata": {"view_type": "imperfect"}})
+
     def test_phh_parser_only_reads_actions_field(self):
         with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".phh") as f:
             f.write('''venue = "quoted venue must not become action"\nplayers = ["Alice", "Bob"]\nactions = [\n  "deal_hole P1 AhAd",\n  "post_blind P1 50",\n  "post_blind P2 100",\n  "call P1"\n]\n''')
@@ -854,6 +889,25 @@ HA
         finally:
             os.remove(temp_path)
 
+    def test_bridge_dealer_metadata_is_canonicalized(self):
+        mock_pbn = """[Event "Lower Dealer"]
+[Date "2025.01.02"]
+[Dealer "n"]
+[Vulnerable "None"]
+[Deal "N:AKQJ.543.2.98765 T987.2.AKQJ.T432 6543.AKQJ.43.AKQ 2.T9876.T98765.J"]
+[Auction "N"]
+1NT Pass 3NT Pass Pass Pass
+"""
+        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".pbn") as f:
+            f.write(mock_pbn)
+            temp_path = f.name
+        try:
+            tokens, meta = next(iter(parse_pbn_to_tokens(temp_path)))
+            self.assertIn("dealer:N", tokens)
+            self.assertEqual(meta["dealer"], "N")
+        finally:
+            os.remove(temp_path)
+
     def test_poker_production_does_not_split_view_group_at_target(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             phh_path = os.path.join(temp_dir, "six.phh")
@@ -915,6 +969,26 @@ actions = [
             )
             self.assertEqual(result["rows"], 4)
             self.assertEqual(result["stats"]["by_seat_count"]["2"]["views"], {"complete": 1, "imperfect": 2, "omniscient": 1})
+
+    def test_cached_entries_respect_max_records(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cache_path = os.path.join(temp_dir, "cache.jsonl")
+            rows = [
+                {"game": "poker", "tokens": ["<bos>", "<poker>", "view_complete", "seat:p1", "act:fold", "<eos>"], "metadata": {"seat_count": 2, "view_type": "complete"}},
+                {"game": "poker", "tokens": ["<bos>", "<poker>", "view_complete", "seat:p2", "act:fold", "<eos>"], "metadata": {"seat_count": 2, "view_type": "complete"}},
+            ]
+            with open(cache_path, "w", encoding="utf-8") as f:
+                for row in rows:
+                    f.write(json.dumps(row) + "\n")
+            result = build_game_shards(
+                "poker",
+                [],
+                os.path.join(temp_dir, "out"),
+                target_tokens=1,
+                max_records=1,
+                cached_entries_path=cache_path,
+            )
+            self.assertEqual(result["rows"], 1)
 
     def test_mahjonglm_jsonl_shard_uses_compatible_schema(self):
         with tempfile.TemporaryDirectory() as temp_dir:

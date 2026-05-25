@@ -152,36 +152,46 @@ def main():
 
     download_sources()
 
-    print("\n--- Step 2: Collecting Parsed Entries ---")
-    entries = list(iter_dataset_entries())
-    if not entries:
-        raise RuntimeError("No games parsed; dataset was not created.")
-    print(f"Collected {len(entries)} tokenized games for deterministic vocab/serialization.")
-
-    print("\n--- Step 3: Building Shared Universal Vocabulary ---")
+    print("\n--- Step 2: Streaming Parsed Entries and Building Shared Vocabulary ---")
+    cache_path = os.path.join(TOKENIZED_DIR, "entries.cache.jsonl")
     tokenizer = UniversalGameTokenizer(special_tokens=SPECIAL_TOKENS)
-    tokenizer.build_vocab(entry["tokens"] for entry in entries)
+    row_count = 0
+    with open(cache_path, "w", encoding="utf-8") as cache:
+        for entry in iter_dataset_entries():
+            tokenizer.add_tokens(entry["tokens"])
+            cache.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            row_count += 1
+    if row_count == 0:
+        raise RuntimeError("No games parsed; dataset was not created.")
+    print(f"Cached {row_count} tokenized entries for strict serialization.")
     tokenizer.save_vocab(VOCAB_PATH)
 
-    print("\n--- Step 4: Serializing Dataset ---")
+    print("\n--- Step 3: Serializing Dataset ---")
     stats = DatasetStatsAccumulator()
-    row_count = 0
+    serialized_count = 0
     with open(DATASET_PATH, "w", encoding="utf-8") as f:
-        for entry in entries:
-            encoded_ids = tokenizer.encode_strict(entry["tokens"])
-            serialized = {
-                "game": entry["game"],
-                "tokens": entry["tokens"],
-                "ids": encoded_ids,
-                "metadata": entry["metadata"],
-            }
-            stats.update(serialized)
-            row_count += 1
-            f.write(json.dumps(serialized, ensure_ascii=False) + "\n")
+        with open(cache_path, "r", encoding="utf-8") as cache:
+            entries = (json.loads(line) for line in cache if line.strip())
+            for entry in entries:
+                encoded_ids = tokenizer.encode_strict(entry["tokens"])
+                serialized = {
+                    "game": entry["game"],
+                    "tokens": entry["tokens"],
+                    "ids": encoded_ids,
+                    "metadata": entry["metadata"],
+                }
+                stats.update(serialized)
+                serialized_count += 1
+                f.write(json.dumps(serialized, ensure_ascii=False) + "\n")
 
-    print(f"Serialized {row_count} tokenized games to {DATASET_PATH}")
+    try:
+        os.remove(cache_path)
+    except OSError:
+        pass
 
-    print("\n--- Step 5: Compiling Dataset Statistics and 3B-Token Gap Report ---")
+    print(f"Serialized {serialized_count} tokenized games to {DATASET_PATH}")
+
+    print("\n--- Step 4: Compiling Dataset Statistics and 3B-Token Gap Report ---")
     stats.print_report(target_tokens_per_game=target_tokens_per_game)
     manifest = build_manifest(stats.summary(target_tokens_per_game), target_tokens_per_game)
     with open(MANIFEST_PATH, "w", encoding="utf-8") as f:

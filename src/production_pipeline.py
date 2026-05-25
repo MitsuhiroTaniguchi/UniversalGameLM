@@ -120,6 +120,23 @@ def iter_cached_entries(cache_path):
                 yield json.loads(line)
 
 
+def limit_entries(entries, game, max_records=None):
+    if not max_records:
+        yield from entries
+        return
+    grouped_views = game in {"poker", "bridge"}
+    emitted = 0
+    emitted_groups = 0
+    for entry in entries:
+        if (emitted_groups if grouped_views else emitted) >= max_records:
+            return
+        metadata = entry.get("metadata") or {}
+        if grouped_views and (metadata.get("view_type") == "complete" or not metadata.get("view_type")):
+            emitted_groups += 1
+        emitted += 1
+        yield entry
+
+
 def validate_entry(entry):
     tokens = entry.get("tokens") or []
     game = entry.get("game")
@@ -189,7 +206,7 @@ def validate_entry(entry):
         elif tokens[2].startswith("view_imperfect_p"):
             viewer = tokens[2].removeprefix("view_imperfect_")
             private_tokens = [token for token in tokens if token.startswith("private_card:")]
-            if len(private_tokens) < 2 or any(not token.startswith(f"private_card:{viewer}:") for token in private_tokens):
+            if not (1 <= len(private_tokens) <= 10) or any(not token.startswith(f"private_card:{viewer}:") for token in private_tokens):
                 raise ProductionDatasetError("Poker imperfect view must contain only the viewer's private card tokens")
             if any(token.startswith(("deck:", "undealt_cards:", "undealt_card:")) for token in tokens):
                 raise ProductionDatasetError("Poker imperfect view cannot contain deck tokens")
@@ -402,7 +419,10 @@ def build_game_shards(
     uploaded = []
 
     try:
-        entry_iter = iter_cached_entries(cached_entries_path) if cached_entries_path else iter_game_entries(game, input_paths, max_records=max_records)
+        if cached_entries_path:
+            entry_iter = limit_entries(iter_cached_entries(cached_entries_path), game, max_records=max_records)
+        else:
+            entry_iter = iter_game_entries(game, input_paths, max_records=max_records)
         for entry in entry_iter:
             metadata = entry.get("metadata") or {}
             starts_new_view_group = game not in {"poker", "bridge"} or metadata.get("view_type") == "complete"

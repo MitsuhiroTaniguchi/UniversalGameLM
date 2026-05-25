@@ -38,7 +38,7 @@ def validate_go_token_sequence(tokens):
         raise ValueError("Missing Go board size token")
     board_size = int(tokens[2].split(":", 1)[1])
     board = sgfmill.boards.Board(board_size)
-    seen_positions = {_board_position_key(board)}
+    position_history = [_board_position_key(board)]
     seen_setup = True
     for token in tokens[3:-1]:
         if token.startswith(("KM:", "RU:", "HA:")):
@@ -54,19 +54,20 @@ def validate_go_token_sequence(tokens):
                 board.apply_setup([], [coords], [])
             else:
                 board.apply_setup([], [], [coords])
-            seen_positions = {_board_position_key(board)}
+            position_history = [_board_position_key(board)]
             continue
         seen_setup = False
         if token in {"b:pass", "w:pass"}:
+            position_history = [_board_position_key(board)]
             continue
         if token.startswith(("b:", "w:")):
             color, point = token.split(":", 1)
             row, col = token_to_coords(point, board_size)
             board.play(row, col, color)
             position_key = _board_position_key(board)
-            if position_key in seen_positions:
-                raise ValueError("Go sequence repeats a previous board position")
-            seen_positions.add(position_key)
+            if len(position_history) >= 2 and position_key == position_history[-2]:
+                raise ValueError("Go sequence violates simple ko")
+            position_history.append(position_key)
             continue
         raise ValueError(f"Invalid Go token: {token}")
     return True
