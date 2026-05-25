@@ -205,9 +205,20 @@ class PokerHandSimulator:
             is_pair = (card1_val == card2_val)
             
             if s == 2:
-                action_tokens = (["act:call"] + _number_digit_tokens("AMT", bb_amt)) if preflop_raised else ["act:check"]
+                if preflop_raised:
+                    if is_strong or is_pair:
+                        action_tokens = ["act:call"] + _number_digit_tokens("AMT", 60)
+                    else:
+                        action_tokens = ["act:fold"]
+                        active_players.remove(s)
+                else:
+                    action_tokens = ["act:check"]
+            elif is_pair and card1_val in "AKQJ":
+                action_tokens = ["act:raise"] + _number_digit_tokens("AMT", 60)
+                preflop_raised = True
             elif is_strong or is_pair:
-                action_tokens = ["act:call"] + _number_digit_tokens("AMT", bb_amt)
+                amount = 60 if preflop_raised else bb_amt
+                action_tokens = ["act:call"] + _number_digit_tokens("AMT", amount)
             else:
                 action_tokens = ["act:fold"]
                 active_players.remove(s)
@@ -368,9 +379,10 @@ def _is_public_phh_action(action):
 
 
 def _parse_phh_scalar(text, name):
-    match = re.search(rf"^{re.escape(name)}\s*=\s*(.+)$", text, flags=re.MULTILINE)
-    if not match:
+    matches = list(re.finditer(rf"^{re.escape(name)}\s*=\s*(.+)$", text, flags=re.MULTILINE))
+    if not matches:
         return None
+    match = matches[-1]
     value = match.group(1).split("#", 1)[0].strip().rstrip(",")
     try:
         return ast.literal_eval(value)

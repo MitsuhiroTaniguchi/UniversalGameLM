@@ -1,5 +1,9 @@
 import collections
 
+NON_MOVE_TOKENS = {
+    "act:preflop", "act:flop", "act:turn", "act:river",
+}
+
 NON_MOVE_PREFIXES = (
     "VARIANT:", "FEN:",
     "SETUP:", "TURN:", "END:",
@@ -16,6 +20,8 @@ NON_MOVE_PREFIXES = (
 
 def is_counted_move_token(token):
     if token.startswith("<") and token.endswith(">"):
+        return False
+    if token in NON_MOVE_TOKENS:
         return False
     return not token.startswith(NON_MOVE_PREFIXES)
 

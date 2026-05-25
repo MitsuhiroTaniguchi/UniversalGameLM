@@ -183,6 +183,9 @@ def _parse_othello_block(block, source_path):
         "date": headers.get("date", "????"),
         "move_count": len(tokens) - 3,
         "source_path": str(Path(source_path).resolve()),
+        "seat_count": 2,
+        "view_type": "complete",
+        "viewer_seat": None,
     }
     return tokens, metadata
 

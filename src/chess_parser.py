@@ -127,6 +127,9 @@ def parse_pgn_to_tokens(pgn_path, max_games=None):
                 "fen": game.headers.get("FEN") if game.headers.get("SetUp") == "1" else None,
                 "source_path": str(Path(pgn_path).resolve()),
                 "game_index": games_parsed,
+                "seat_count": 2,
+                "view_type": "complete",
+                "viewer_seat": None,
             }
             
             yield tokens, metadata

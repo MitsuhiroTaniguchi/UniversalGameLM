@@ -94,6 +94,27 @@ def _date_from_csa(csa_text):
             return line.split(":", 1)[1][:10].replace("/", ".").replace("-", ".")
     return None
 
+
+def validate_shogi_token_sequence(tokens):
+    board = cshogi.Board()
+    for token in tokens[2:-1]:
+        if token.startswith("TURN:"):
+            expected_turn = "black" if board.turn == cshogi.BLACK else "white"
+            if token != f"TURN:{expected_turn}":
+                raise ValueError(f"Shogi turn token does not match board: {token}")
+            continue
+        if token.startswith("END:"):
+            continue
+        if token == "None" or not re.fullmatch(r"(?:[1-9][a-i][1-9][a-i]\+?|[PLNSGBR]\*[1-9][a-i])", token):
+            raise ValueError(f"Invalid shogi USI token: {token}")
+        move = board.move_from_usi(token)
+        if not move or move not in board.legal_moves:
+            raise ValueError(f"Illegal shogi move token: {token}")
+        board.push(move)
+    if not any(token.startswith("END:") for token in tokens):
+        raise ValueError("Shogi entry is missing terminal token")
+
+
 def parse_csa_to_tokens(csa_path):
     """
     Parses a single Shogi CSA file using cshogi and returns the token sequence and metadata.
@@ -142,6 +163,9 @@ def parse_csa_to_tokens(csa_path):
             "move_count": len(usi_moves),
             "filename": os.path.basename(csa_path),
             "source_path": str(Path(csa_path).resolve()),
+            "seat_count": 2,
+            "view_type": "complete",
+            "viewer_seat": None,
         }
         
         return tokens, metadata

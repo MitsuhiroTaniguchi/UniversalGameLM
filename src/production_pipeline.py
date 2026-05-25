@@ -8,7 +8,7 @@ from pathlib import Path
 import chess
 
 from src.chess_parser import parse_chess_inputs
-from src.shogi_parser import parse_shogi_directory
+from src.shogi_parser import parse_shogi_directory, validate_shogi_token_sequence
 from src.go_parser import parse_go_directory, validate_go_token_sequence
 from src.othello_parser import (
     parse_othello_hf_dataset,
@@ -175,13 +175,10 @@ def validate_entry(entry):
                 raise ProductionDatasetError(f"Illegal chess move token: {token}")
             board.push(move)
     if game == "shogi":
-        for token in tokens[2:-1]:
-            if token.startswith(("TURN:", "END:")):
-                continue
-            if token == "None" or not re.fullmatch(r"(?:[1-9][a-i][1-9][a-i]\+?|[PLNSGBR]\*[1-9][a-i])", token):
-                raise ProductionDatasetError(f"Invalid shogi USI token: {token}")
-        if not any(token.startswith("END:") for token in tokens):
-            raise ProductionDatasetError("Shogi entry is missing terminal token")
+        try:
+            validate_shogi_token_sequence(tokens)
+        except Exception as exc:
+            raise ProductionDatasetError(f"Invalid Shogi sequence: {exc}") from exc
     if game == "go":
         try:
             validate_go_token_sequence(tokens)
@@ -291,6 +288,17 @@ def validate_entry(entry):
                     raise ProductionDatasetError("Bridge play seat annotations do not match trick order")
             if tokens[2] == "view_omniscient" and played_cards:
                 validate_bridge_play(played_cards, hands, play_leader, trump_suit)
+            elif tokens[2].startswith("view_imperfect_") and played_cards and hand_tokens:
+                visible_hands = {}
+                for token in hand_tokens:
+                    _, seat, card = token.split(":")
+                    visible_hands.setdefault(seat, set()).add(card)
+                visible_remaining = {seat: set(cards) for seat, cards in visible_hands.items()}
+                for seat, card in zip(played_seats, played_cards):
+                    if seat in visible_remaining:
+                        if card not in visible_remaining[seat]:
+                            raise ProductionDatasetError(f"Bridge visible hand cannot play {card}")
+                        visible_remaining[seat].remove(card)
         except Exception as exc:
             raise ProductionDatasetError(f"Invalid bridge sequence: {exc}") from exc
 

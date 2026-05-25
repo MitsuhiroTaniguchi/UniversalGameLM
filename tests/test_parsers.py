@@ -212,6 +212,21 @@ class TestUniversalGameParsers(unittest.TestCase):
         canonical = validate_othello_moves(moves_without_passes)
         self.assertEqual(canonical[-2:], ["pass", "pass"])
 
+    def test_validate_entry_rejects_illegal_shogi_moves(self):
+        with self.assertRaises(ProductionDatasetError):
+            validate_entry({
+                "game": "shogi",
+                "tokens": ["<bos>", "<shogi>", "5a5b", "END:resign", "<eos>"],
+                "metadata": {"seat_count": 2, "view_type": "complete"},
+            })
+
+    def test_validate_entry_accepts_legal_shogi_prefix(self):
+        validate_entry({
+            "game": "shogi",
+            "tokens": ["<bos>", "<shogi>", "7g7f", "3c3d", "END:resign", "<eos>"],
+            "metadata": {"seat_count": 2, "view_type": "complete"},
+        })
+
     def test_poker_simulator(self):
         simulator = PokerHandSimulator()
         tokens, meta = simulator.simulate_hand()
@@ -252,6 +267,17 @@ class TestUniversalGameParsers(unittest.TestCase):
             validate_entry({"game": "poker", "tokens": tokens, "metadata": meta})
         self.assertTrue(any(token.startswith("private_card:") for token in entries[-1][0]))
         self.assertTrue(any(token.startswith("undealt_card:") for token in entries[-1][0]))
+
+    def test_poker_simulator_can_raise_preflop(self):
+        def rig_shuffle(deck):
+            for card in ["Ah", "Ad", "Kc", "Kd"]:
+                deck.remove(card)
+            deck.extend(["Kd", "Kc", "Ad", "Ah"])
+
+        with mock.patch("src.poker_parser.random.shuffle", rig_shuffle):
+            tokens, meta = PokerHandSimulator(num_seats=2).simulate_hand()
+        self.assertIn("act:raise", tokens)
+        validate_entry({"game": "poker", "tokens": tokens, "metadata": meta})
 
     def test_poker_simulator_omniscient_keeps_undealt_board_cards_after_prefold(self):
         def rig_shuffle(deck):
@@ -687,6 +713,32 @@ actions = [
         finally:
             os.remove(temp_path)
 
+    def test_phhs_parser_uses_latest_redefined_state(self):
+        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".phhs") as f:
+            f.write("""variant = 'NT'
+actions = [
+  'd dh p1 AhAd',
+  'd dh p2 KcKd',
+  'p1 cc',
+  'p2 cc',
+]
+variant = 'FT'
+actions = [
+  'd dh p1 QhQs',
+  'd dh p2 JcJd',
+  'p1 cc',
+  'p2 cc',
+]
+""")
+            temp_path = f.name
+        try:
+            hands = list(parse_phh_to_tokens(temp_path))
+            self.assertIn("VARIANT:nt", hands[0][0])
+            self.assertIn("VARIANT:ft", hands[4][0])
+            self.assertNotIn("VARIANT:nt", hands[4][0])
+        finally:
+            os.remove(temp_path)
+
 
     def test_phh_parser_ignores_brackets_inside_action_strings(self):
         with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".phh") as f:
@@ -838,6 +890,7 @@ actions = [
         self.assertFalse(is_counted_move_token("card:Ah"))
         self.assertFalse(is_counted_move_token("showdown:p1"))
         self.assertFalse(is_counted_move_token("winner:p1"))
+        self.assertFalse(is_counted_move_token("act:flop"))
         self.assertTrue(is_counted_move_token("7g7f"))
         self.assertTrue(is_counted_move_token("act:raise"))
 
@@ -905,6 +958,31 @@ HA
             tokens, meta = next(iter(parse_pbn_to_tokens(temp_path)))
             self.assertIn("dealer:N", tokens)
             self.assertEqual(meta["dealer"], "N")
+        finally:
+            os.remove(temp_path)
+
+    def test_bridge_imperfect_view_validates_visible_hand_cards(self):
+        mock_pbn = """[Event "Visible Hand"]
+[Date "2025.01.02"]
+[Dealer "N"]
+[Vulnerable "None"]
+[Deal "N:AKQJ.543.2.98765 T987.2.AKQJ.T432 6543.AKQJ.43.AKQ 2.T9876.T98765.J"]
+[Auction "N"]
+1NT Pass 3NT Pass Pass Pass
+[Play "S"]
+HA H9 H5 H2
+"""
+        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".pbn") as f:
+            f.write(mock_pbn)
+            temp_path = f.name
+        try:
+            boards = list(parse_pbn_to_tokens(temp_path))
+            imperfect_tokens, imperfect_meta = next((tokens, meta) for tokens, meta in boards if meta["viewer_seat"] == "S")
+            validate_entry({"game": "bridge", "tokens": imperfect_tokens, "metadata": imperfect_meta})
+            bad_tokens = list(imperfect_tokens)
+            bad_tokens[bad_tokens.index("play:S:Ah")] = "play:S:Ks"
+            with self.assertRaises(ProductionDatasetError):
+                validate_entry({"game": "bridge", "tokens": bad_tokens, "metadata": imperfect_meta})
         finally:
             os.remove(temp_path)
 

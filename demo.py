@@ -1,5 +1,6 @@
 import os
 import json
+from pathlib import Path
 from datetime import datetime, timezone
 
 from src.download import download_chess_pgn, download_shogi_daily, download_go_sgf, download_othello_pgn
@@ -78,11 +79,17 @@ def iter_real_game_entries():
         for tokens, meta in parse_go_directory(go_dir, max_games=go_max):
             yield {"game": "go", "tokens": tokens, "metadata": meta}
 
-    othello_pgn_path = os.path.join(BASE_DIR, "data", "othello", "WTH_2024.pgn")
+    othello_dir = Path(BASE_DIR) / "data" / "othello"
     othello_max = env_optional_int("OTHELLO_PARSE_MAX_GAMES", 100)
-    if os.path.exists(othello_pgn_path):
-        for tokens, meta in parse_othello_pgn_to_tokens(othello_pgn_path, max_games=othello_max):
-            yield {"game": "othello", "tokens": tokens, "metadata": meta}
+    othello_parsed = 0
+    if othello_dir.exists():
+        for othello_pgn_path in sorted(othello_dir.glob("WTH_*.pgn")):
+            remaining = None if othello_max is None else othello_max - othello_parsed
+            if remaining is not None and remaining <= 0:
+                break
+            for tokens, meta in parse_othello_pgn_to_tokens(str(othello_pgn_path), max_games=remaining):
+                othello_parsed += 1
+                yield {"game": "othello", "tokens": tokens, "metadata": meta}
 
     bridge_dir = os.path.join(BASE_DIR, "data", "bridge")
     bridge_max = env_optional_int("BRIDGE_PARSE_MAX_GAMES", 100)
@@ -212,7 +219,7 @@ def main():
             )
 
         private_repo = env_bool("HF_PRIVATE", default=True)
-        print(f"\n--- Step 6: Uploading artifacts to Hugging Face dataset repo {repo_id} ---")
+        print(f"\n--- Step 5: Uploading artifacts to Hugging Face dataset repo {repo_id} ---")
         uploader = HuggingFaceShardUploader(repo_id)
         uploaded = uploader.upload_directory_files(
             TOKENIZED_DIR,

@@ -39,6 +39,8 @@ def validate_go_token_sequence(tokens):
     board_size = int(tokens[2].split(":", 1)[1])
     board = sgfmill.boards.Board(board_size)
     position_history = [_board_position_key(board)]
+    rule_text = " ".join(token.split(":", 1)[1].lower() for token in tokens[3:-1] if token.startswith("RU:"))
+    use_positional_superko = any(name in rule_text for name in ("aga", "chinese", "nz", "new_zealand", "tromp"))
     seen_setup = True
     for token in tokens[3:-1]:
         if token.startswith(("KM:", "RU:", "HA:")):
@@ -65,7 +67,9 @@ def validate_go_token_sequence(tokens):
             row, col = token_to_coords(point, board_size)
             board.play(row, col, color)
             position_key = _board_position_key(board)
-            if len(position_history) >= 2 and position_key == position_history[-2]:
+            if use_positional_superko and position_key in position_history:
+                raise ValueError("Go sequence violates positional superko")
+            if not use_positional_superko and len(position_history) >= 2 and position_key == position_history[-2]:
                 raise ValueError("Go sequence violates simple ko")
             position_history.append(position_key)
             continue
@@ -163,6 +167,9 @@ def parse_sgf_to_tokens(sgf_path):
             "move_count": len(moves),
             "filename": os.path.basename(sgf_path),
             "source_path": str(Path(sgf_path).resolve()),
+            "seat_count": 2,
+            "view_type": "complete",
+            "viewer_seat": None,
         }
 
         return tokens, metadata
