@@ -63,7 +63,7 @@ def _setup_tokens(csa_text):
     if explicit_position:
         raise ValueError("Explicit CSA setup is not serialized; reject non-PI starts")
     if side_to_move:
-        tokens.append(f"TURN:{side_to_move}")
+        tokens.append(f"sh:turn:{side_to_move}")
     return tokens
 
 
@@ -101,28 +101,54 @@ def _date_from_csa(csa_text):
 
 def validate_shogi_token_sequence(tokens):
     board = cshogi.Board()
-    for token in tokens[2:-1]:
-        if token.startswith("TURN:"):
+    inner = tokens[2:-1]  # strip <bos>, <shogi>, <eos>
+    i = 0
+    while i < len(inner):
+        token = inner[i]
+        if token.startswith("sh:turn:"):
             expected_turn = "black" if board.turn == cshogi.BLACK else "white"
-            if token != f"TURN:{expected_turn}":
+            if token != f"sh:turn:{expected_turn}":
                 raise ValueError(f"Shogi turn token does not match board: {token}")
+            i += 1
             continue
-        if token.startswith("END:"):
+        if token.startswith("sh:end:"):
+            i += 1
             continue
-        if token == "None" or not re.fullmatch(r"(?:[1-9][a-i][1-9][a-i]\+?|[PLNSGBR]\*[1-9][a-i])", token):
-            raise ValueError(f"Invalid shogi USI token: {token}")
-        move = board.move_from_usi(token)
+        # Expect a move-origin token: sh:{color}:{src_or_piece}
+        m = re.fullmatch(r"sh:[bw]:(.+)", token)
+        if not m:
+            raise ValueError(f"Unexpected shogi token: {token}")
+        origin = m.group(1)
+        # Next token must be the destination
+        if i + 1 >= len(inner):
+            raise ValueError(f"Missing destination token after {token}")
+        dest_token = inner[i + 1]
+        dest_m = re.fullmatch(r"sh:([1-9][a-i])", dest_token)
+        if not dest_m:
+            raise ValueError(f"Invalid shogi destination token: {dest_token}")
+        dest = dest_m.group(1)
+        i += 2
+        # Check for promotion suffix
+        promote = ""
+        if i < len(inner) and inner[i] == "sh:+":
+            promote = "+"
+            i += 1
+        # Reconstruct USI move string
+        usi = origin + dest + promote
+        if not re.fullmatch(r"(?:[1-9][a-i][1-9][a-i]\+?|[PLNSGBR]\*[1-9][a-i])", usi):
+            raise ValueError(f"Invalid reconstructed shogi USI move: {usi}")
+        move = board.move_from_usi(usi)
         if not move or move not in board.legal_moves:
-            raise ValueError(f"Illegal shogi move token: {token}")
+            raise ValueError(f"Illegal shogi move: {usi}")
         board.push(move)
-    if not any(token.startswith("END:") for token in tokens):
+    if not any(token.startswith("sh:end:") for token in tokens):
         raise ValueError("Shogi entry is missing terminal token")
 
 
 def parse_csa_to_tokens(csa_path):
     """
     Parses a single Shogi CSA file using cshogi and returns the token sequence and metadata.
-    Token sequence format: ['<bos>', '<shogi>', '7g7f', '1c1d', ..., '<eos>']
+    Token sequence format: ['<bos>', '<shogi>', 'sh:turn:black', 'sh:b:7g', 'sh:7f', 'sh:w:3c', 'sh:3d', ..., 'sh:end:resign', '<eos>']
     """
     if not os.path.exists(csa_path):
         print(f"[Error] CSA file not found: {csa_path}")
@@ -143,12 +169,37 @@ def parse_csa_to_tokens(csa_path):
         usi_moves = [cshogi.move_to_usi(m) for m in parser.moves]
         if any(move in (None, "None", "") for move in usi_moves):
             return None, None
-        
+
         # Quality Filter: Skip extremely short or empty games
         if len(usi_moves) < 10:
             return None, None
 
-        tokens = ["<bos>", "<shogi>"] + _setup_tokens(csa_text) + usi_moves + [f"END:{terminal_reason}", "<eos>"]
+        setup = _setup_tokens(csa_text)
+        has_turn_token = any(t.startswith("sh:turn:") for t in setup)
+        is_black_turn = True  # default: sente starts
+        if has_turn_token:
+            is_black_turn = any(t == "sh:turn:black" for t in setup)
+
+        move_tokens = []
+        for m in parser.moves:
+            usi = cshogi.move_to_usi(m)
+            color = "b" if is_black_turn else "w"
+            # Parse the USI string
+            if "*" in usi:
+                # Drop: e.g. "P*7f" -> piece + dest
+                piece_part = usi[:2]  # "P*"
+                dest = usi[2:4]       # "7f"
+                move_tokens.extend([f"sh:{color}:{piece_part}", f"sh:{dest}"])
+            else:
+                src = usi[:2]
+                dest = usi[2:4]
+                move_tokens.append(f"sh:{color}:{src}")
+                move_tokens.append(f"sh:{dest}")
+                if usi.endswith("+"):
+                    move_tokens.append("sh:+")
+            is_black_turn = not is_black_turn
+
+        tokens = ["<bos>", "<shogi>"] + setup + move_tokens + [f"sh:end:{terminal_reason}", "<eos>"]
         
         # Determine winner
         winner = "Draw"

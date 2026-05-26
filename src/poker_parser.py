@@ -12,19 +12,19 @@ SUITS = "hdcs"
 FULL_DECK = [f"{v}{s}" for v in VALUES for s in SUITS]
 CARD_RE = re.compile(r"[2-9TJQKA][hdcs]", re.IGNORECASE)
 POKER_MOVE_ACTIONS = {
-    "act:post_small_blind",
-    "act:post_big_blind",
-    "act:post_blind",
-    "act:post_ante",
-    "act:blind",
-    "act:ante",
-    "act:bet",
-    "act:call",
-    "act:check",
-    "act:fold",
-    "act:raise",
-    "act:show",
-    "act:muck",
+    "pk:act:post_small_blind",
+    "pk:act:post_big_blind",
+    "pk:act:post_blind",
+    "pk:act:post_ante",
+    "pk:act:blind",
+    "pk:act:ante",
+    "pk:act:bet",
+    "pk:act:call",
+    "pk:act:check",
+    "pk:act:fold",
+    "pk:act:raise",
+    "pk:act:show",
+    "pk:act:muck",
 }
 
 
@@ -152,14 +152,14 @@ class PokerHandSimulator:
         order = list(active_players)
         bettor = next((seat for seat in order if should_bet(seat)), None)
         if bettor is None:
-            return [token for seat in order for token in (f"seat:p{seat}", "act:check")], order
+            return [token for seat in order for token in (f"pk:seat:p{seat}", "pk:act:check")], order
 
         tokens = []
         remaining = list(order)
         bettor_index = order.index(bettor)
         for seat in order[:bettor_index]:
-            tokens.extend([f"seat:p{seat}", "act:check"])
-        tokens.extend([f"seat:p{bettor}", "act:bet"] + _number_digit_tokens("AMT", bet_amount))
+            tokens.extend([f"pk:seat:p{seat}", "pk:act:check"])
+        tokens.extend([f"pk:seat:p{bettor}", "pk:act:bet"] + _number_digit_tokens("pk:amt", bet_amount))
         current_amount = bet_amount
         raised_by = None
         action_order = order[bettor_index + 1:] + order[:bettor_index]
@@ -168,13 +168,13 @@ class PokerHandSimulator:
             if raised_by is None and should_raise(seat):
                 current_amount = bet_amount * 2
                 raised_by = seat
-                tokens.extend([f"seat:p{seat}", "act:raise"] + _number_digit_tokens("AMT", current_amount))
+                tokens.extend([f"pk:seat:p{seat}", "pk:act:raise"] + _number_digit_tokens("pk:amt", current_amount))
             elif should_continue(seat):
-                tokens.extend([f"seat:p{seat}", "act:call"] + _number_digit_tokens("AMT", current_amount))
+                tokens.extend([f"pk:seat:p{seat}", "pk:act:call"] + _number_digit_tokens("pk:amt", current_amount))
                 if raised_by is None:
                     acted_before_raise.append(seat)
             else:
-                tokens.extend([f"seat:p{seat}", "act:fold"])
+                tokens.extend([f"pk:seat:p{seat}", "pk:act:fold"])
                 remaining.remove(seat)
 
         if raised_by is not None:
@@ -182,9 +182,9 @@ class PokerHandSimulator:
                 if seat not in remaining:
                     continue
                 if should_continue(seat):
-                    tokens.extend([f"seat:p{seat}", "act:call"] + _number_digit_tokens("AMT", current_amount))
+                    tokens.extend([f"pk:seat:p{seat}", "pk:act:call"] + _number_digit_tokens("pk:amt", current_amount))
                 else:
-                    tokens.extend([f"seat:p{seat}", "act:fold"])
+                    tokens.extend([f"pk:seat:p{seat}", "pk:act:fold"])
                     remaining.remove(seat)
         return tokens, remaining
 
@@ -212,17 +212,17 @@ class PokerHandSimulator:
             can_raise = is_premium_pair and raise_count < 2
             if can_raise:
                 current_amount = 60 if current_amount < 60 else current_amount * 2
-                action_tokens = ["act:raise"] + _number_digit_tokens("AMT", current_amount)
+                action_tokens = ["pk:act:raise"] + _number_digit_tokens("pk:amt", current_amount)
                 raise_count += 1
                 needs_response = [s for s in acted_remaining if s != seat]
             elif seat == 2 and current_amount == bb_amt:
-                action_tokens = ["act:check"]
+                action_tokens = ["pk:act:check"]
             elif is_strong or is_pair:
-                action_tokens = ["act:call"] + _number_digit_tokens("AMT", current_amount)
+                action_tokens = ["pk:act:call"] + _number_digit_tokens("pk:amt", current_amount)
             else:
-                action_tokens = ["act:fold"]
+                action_tokens = ["pk:act:fold"]
                 remaining.remove(seat)
-            tokens.extend([f"seat:p{seat}"] + action_tokens)
+            tokens.extend([f"pk:seat:p{seat}"] + action_tokens)
             if seat in remaining and seat not in acted_remaining:
                 acted_remaining.append(seat)
 
@@ -231,9 +231,9 @@ class PokerHandSimulator:
                 continue
             is_strong, is_pair, _ = hand_flags(seat)
             if is_strong or is_pair:
-                tokens.extend([f"seat:p{seat}", "act:call"] + _number_digit_tokens("AMT", current_amount))
+                tokens.extend([f"pk:seat:p{seat}", "pk:act:call"] + _number_digit_tokens("pk:amt", current_amount))
             else:
-                tokens.extend([f"seat:p{seat}", "act:fold"])
+                tokens.extend([f"pk:seat:p{seat}", "pk:act:fold"])
                 remaining.remove(seat)
         return tokens, remaining
 
@@ -257,8 +257,8 @@ class PokerHandSimulator:
         # 2. Blinds Posting. Hole cards are intentionally not emitted here:
         # pre-showdown action tokens must not leak hidden information.
         sb_amt, bb_amt = 10, 20
-        public_tokens.extend(["act:preflop", "seat:p1", "act:post_small_blind"] + _number_digit_tokens("AMT", sb_amt))
-        public_tokens.extend(["seat:p2", "act:post_big_blind"] + _number_digit_tokens("AMT", bb_amt))
+        public_tokens.extend(["pk:act:preflop", "pk:seat:p1", "pk:act:post_small_blind"] + _number_digit_tokens("pk:amt", sb_amt))
+        public_tokens.extend(["pk:seat:p2", "pk:act:post_big_blind"] + _number_digit_tokens("pk:amt", bb_amt))
         
         # Community cards are dealt only when the street is reached. If everyone
         # folds preflop, those cards remain in the undealt deck for omniscient views.
@@ -275,7 +275,7 @@ class PokerHandSimulator:
         # Flop betting round (if at least 2 active players left)
         if len(active_players) >= 2:
             flop = [deck.pop(), deck.pop(), deck.pop()]
-            public_tokens.extend(["act:flop"] + [f"card:{card}" for card in flop])
+            public_tokens.extend(["pk:act:flop"] + [t for card in flop for t in ("pk:card", f"pk:{card[0]}", f"pk:{card[1]}")])
             flop_ranks = {card[0] for card in flop}
             round_tokens, active_players = self._postflop_betting_round(
                 active_players,
@@ -289,7 +289,7 @@ class PokerHandSimulator:
         # Turn betting round
         if len(active_players) >= 2:
             turn = [deck.pop()]
-            public_tokens.extend(["act:turn", f"card:{turn[0]}"])
+            public_tokens.extend(["pk:act:turn", "pk:card", f"pk:{turn[0][0]}", f"pk:{turn[0][1]}"])
             turn_rank = turn[0][0]
             turn_bettor = next(
                 (seat for seat in active_players if any(card[0] == turn_rank for card in hands[seat])),
@@ -307,7 +307,7 @@ class PokerHandSimulator:
         # River betting round
         if len(active_players) >= 2:
             river = [deck.pop()]
-            public_tokens.extend(["act:river", f"card:{river[0]}"])
+            public_tokens.extend(["pk:act:river", "pk:card", f"pk:{river[0][0]}", f"pk:{river[0][1]}"])
             river_rank = river[0][0]
             river_bettor = next(
                 (seat for seat in active_players if any(card[0] == river_rank for card in hands[seat])),
@@ -330,7 +330,7 @@ class PokerHandSimulator:
             # Evaluate hands
             best_score = None
             for s in active_players:
-                public_tokens.extend([f"showdown:p{s}", f"card:{hands[s][0]}", f"card:{hands[s][1]}"])
+                public_tokens.extend([f"pk:showdown:p{s}", "pk:card", f"pk:{hands[s][0][0]}", f"pk:{hands[s][0][1]}", "pk:card", f"pk:{hands[s][1][0]}", f"pk:{hands[s][1][1]}"])
                 score = self._score_key(self.get_best_hand(hands[s], flop + turn + river))
                 if best_score is None or score > best_score:
                     best_score = score
@@ -339,8 +339,8 @@ class PokerHandSimulator:
                     winners.append(s)
                     
         for winner in winners:
-            public_tokens.append(f"winner:p{winner}")
-        tokens = ["<bos>", "<poker>", "view_complete"] + public_tokens + ["<eos>"]
+            public_tokens.append(f"pk:winner:p{winner}")
+        tokens = ["<bos>", "<poker>", "view:complete"] + public_tokens + ["<eos>"]
         
         metadata = {
             "num_players": self.num_seats,
@@ -371,7 +371,7 @@ class PokerHandSimulator:
         public_body = complete_tokens[3:-1]
         for seat in range(1, self.num_seats + 1):
             yield (
-                ["<bos>", "<poker>", f"view_imperfect_p{seat}"]
+                ["<bos>", "<poker>", f"view:imperfect:{seat}"]
                 + _private_card_tokens(seat, hands[seat])
                 + public_body
                 + ["<eos>"],
@@ -381,7 +381,7 @@ class PokerHandSimulator:
         for seat in range(1, self.num_seats + 1):
             private_tokens.extend(_private_card_tokens(seat, hands[seat]))
         yield (
-            ["<bos>", "<poker>", "view_omniscient"]
+            ["<bos>", "<poker>", "view:omniscient"]
             + private_tokens
             + _undealt_card_tokens(undealt_cards)
             + public_body
@@ -419,15 +419,15 @@ def _number_digit_tokens(prefix, value):
 
 
 def _structured_value_tokens(field, value):
-    tokens = [f"{field.upper()}:BEGIN"]
+    tokens = [f"pk:{field.upper()}:BEGIN"]
     if isinstance(value, (list, tuple)):
         for index, item in enumerate(value):
             if index:
-                tokens.append(f"{field.upper()}:SEP")
-            tokens.extend(_number_digit_tokens("NUM", item))
+                tokens.append(f"pk:{field.upper()}:SEP")
+            tokens.extend(_number_digit_tokens("pk:num", item))
     else:
-        tokens.extend(_number_digit_tokens("NUM", value))
-    tokens.append(f"{field.upper()}:END")
+        tokens.extend(_number_digit_tokens("pk:num", value))
+    tokens.append(f"pk:{field.upper()}:END")
     return tokens
 
 def _is_public_phh_action(action):
@@ -522,7 +522,7 @@ def _phh_state_tokens(text):
     for field in ("variant", "ante_trimming_status", "betting_type"):
         value = _parse_phh_scalar(text, field)
         if value is not None:
-            tokens.append(f"{field.upper()}:{str(value).lower().replace(' ', '_')}")
+            tokens.append(f"pk:{field.upper()}:{str(value).lower().replace(' ', '_')}")
     for field in ("antes", "blinds_or_straddles", "min_bet", "starting_stacks"):
         value = _parse_phh_scalar(text, field)
         if value is not None:
@@ -546,11 +546,17 @@ def _cards_token(cards):
 
 
 def _private_card_tokens(seat, cards):
-    return [f"private_card:p{seat}:{card}" for card in cards]
+    tokens = []
+    for card in cards:
+        tokens.extend(["pk:private_card", f"pk:seat:p{seat}", f"pk:{card[0]}", f"pk:{card[1]}"])
+    return tokens
 
 
 def _undealt_card_tokens(cards):
-    return [f"undealt_card:{card}" for card in cards]
+    tokens = []
+    for card in cards:
+        tokens.extend(["pk:undealt_card", f"pk:{card[0]}", f"pk:{card[1]}"])
+    return tokens
 
 
 def _seat_from_action(action):
@@ -629,46 +635,48 @@ def _public_action_tokens(action):
     card_tokens = []
     for part in parts:
         if re.fullmatch(r"\d+(?:\.\d+)?", part):
-            amount_tokens.extend(_number_digit_tokens("AMT", part))
+            amount_tokens.extend(_number_digit_tokens("pk:amt", part))
         elif CARD_RE.fullmatch(part):
-            card_tokens.append(f"card:{_normalize_card(part)}")
+            normalized = _normalize_card(part)
+            card_tokens.extend(["pk:card", f"pk:{normalized[0]}", f"pk:{normalized[1]}"])
         elif CARD_RE.findall(part) and "".join(CARD_RE.findall(part)).lower() == part.lower():
-            card_tokens.extend(f"card:{card}" for card in _extract_cards(part))
+            for card in _extract_cards(part):
+                card_tokens.extend(["pk:card", f"pk:{card[0]}", f"pk:{card[1]}"])
 
     action_token = None
     if "deal" in parts and "board" in parts:
-        action_token = "act:deal_board"
+        action_token = "pk:act:deal_board"
     elif {"show", "or", "muck", "hole", "cards"}.issubset(parts):
-        action_token = "act:show"
+        action_token = "pk:act:show"
     elif "post_blind" in parts or ("post" in parts and "blind" in parts and "small" not in parts and "big" not in parts):
-        action_token = "act:post_blind"
+        action_token = "pk:act:post_blind"
     elif "post_ante" in parts:
-        action_token = "act:post_ante"
+        action_token = "pk:act:post_ante"
     elif "post" in parts and "small" in parts and "blind" in parts:
-        action_token = "act:post_small_blind"
+        action_token = "pk:act:post_small_blind"
     elif "post" in parts and "big" in parts and "blind" in parts:
-        action_token = "act:post_big_blind"
+        action_token = "pk:act:post_big_blind"
     elif "post" in parts and "ante" in parts:
-        action_token = "act:post_ante"
+        action_token = "pk:act:post_ante"
     elif "flop" in parts:
-        action_token = "act:flop"
+        action_token = "pk:act:flop"
     elif "turn" in parts:
-        action_token = "act:turn"
+        action_token = "pk:act:turn"
     elif "river" in parts:
-        action_token = "act:river"
+        action_token = "pk:act:river"
     else:
         for part in parts:
             if part in {"call", "check", "fold", "raise", "bet", "show", "muck", "blind", "ante", "board"}:
-                action_token = f"act:{part}"
+                action_token = f"pk:act:{part}"
                 break
 
     if action_token:
         tokens = []
         if seat:
-            tokens.append(f"seat:{seat}")
+            tokens.append(f"pk:seat:{seat}")
         tokens.append(action_token)
         if "hidden" in parts:
-            tokens.append("act:hidden")
+            tokens.append("pk:act:hidden")
         tokens.extend(amount_tokens)
         tokens.extend(card_tokens)
         return tokens
@@ -678,22 +686,23 @@ def _public_action_tokens(action):
     while index < len(parts):
         part = parts[index]
         if re.fullmatch(r"p\d+", part):
-            tokens.append(f"seat:{part}")
+            tokens.append(f"pk:seat:{part}")
         elif re.fullmatch(r"\d+(?:\.\d+)?", part):
-            tokens.extend(_number_digit_tokens("AMT", part))
+            tokens.extend(_number_digit_tokens("pk:amt", part))
         elif CARD_RE.fullmatch(part):
-            tokens.append(f"card:{_normalize_card(part)}")
+            normalized = _normalize_card(part)
+            tokens.extend(["pk:card", f"pk:{normalized[0]}", f"pk:{normalized[1]}"])
         elif part == "post" and index + 2 < len(parts) and parts[index + 1] in {"small", "big"} and parts[index + 2] == "blind":
-            tokens.append(f"act:post_{parts[index + 1]}_blind")
+            tokens.append(f"pk:act:post_{parts[index + 1]}_blind")
             index += 2
         elif part in {"post", "blind", "ante"} and index + 1 < len(parts):
-            tokens.append(f"act:{part}_{parts[index + 1]}")
+            tokens.append(f"pk:act:{part}_{parts[index + 1]}")
             index += 1
         elif part in {"deal", "board"} and index + 1 < len(parts):
-            tokens.append(f"act:{part}_{parts[index + 1]}")
+            tokens.append(f"pk:act:{part}_{parts[index + 1]}")
             index += 1
         else:
-            tokens.append(f"act:{part}")
+            tokens.append(f"pk:act:{part}")
         index += 1
     return tokens
 
@@ -820,7 +829,7 @@ def poker_view_entries(actions, state_tokens):
 
     entries = [
         (
-            ["<bos>", "<poker>", "view_complete"] + state_tokens + public_actions + ["<eos>"],
+            ["<bos>", "<poker>", "view:complete"] + state_tokens + public_actions + ["<eos>"],
             {**base_metadata, "view_type": "complete", "viewer_seat": None},
         )
     ]
@@ -828,7 +837,7 @@ def poker_view_entries(actions, state_tokens):
     for seat in sorted(observed_holes):
         entries.append(
             (
-                ["<bos>", "<poker>", f"view_imperfect_p{seat}"]
+                ["<bos>", "<poker>", f"view:imperfect:{seat}"]
                 + _private_card_tokens(seat, observed_holes[seat])
                 + state_tokens
                 + public_actions
@@ -843,7 +852,7 @@ def poker_view_entries(actions, state_tokens):
             private_tokens.extend(_private_card_tokens(seat, cards))
         entries.append(
             (
-                ["<bos>", "<poker>", "view_omniscient"]
+                ["<bos>", "<poker>", "view:omniscient"]
                 + private_tokens
                 + _undealt_card_tokens(undealt_cards)
                 + state_tokens

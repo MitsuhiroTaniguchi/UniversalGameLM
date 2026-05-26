@@ -34,35 +34,47 @@ def _board_position_key(board):
 def validate_go_token_sequence(tokens):
     if len(tokens) < 4 or tokens[0] != "<bos>" or tokens[1] != "<go>" or tokens[-1] != "<eos>":
         raise ValueError("Invalid Go BOS/game/EOS markers")
-    if not tokens[2].startswith("SZ:"):
+    if not tokens[2].startswith("go:sz:"):
         raise ValueError("Missing Go board size token")
-    board_size = int(tokens[2].split(":", 1)[1])
+    board_size = int(tokens[2].split(":", 2)[2])
     board = sgfmill.boards.Board(board_size)
     position_history = [_board_position_key(board)]
-    rule_text = " ".join(token.split(":", 1)[1].lower() for token in tokens[3:-1] if token.startswith("RU:"))
+    rule_text = " ".join(token.split(":", 2)[2].lower() for token in tokens[3:-1] if token.startswith("go:ru:"))
     use_positional_superko = any(name in rule_text for name in ("aga", "chinese", "nz", "new_zealand", "tromp"))
     seen_setup = True
-    for token in tokens[3:-1]:
-        if token.startswith(("KM:", "RU:", "HA:")):
+    body = tokens[3:-1]
+    i = 0
+    while i < len(body):
+        token = body[i]
+        if token.startswith(("go:km:", "go:ru:", "go:ha:")):
+            i += 1
             continue
-        if token.startswith(("AB:", "AW:", "AE:")):
+        if token in ("go:setup_b", "go:setup_w", "go:setup_e"):
             if not seen_setup:
                 raise ValueError("Setup tokens after moves are not supported")
-            point = token.split(":", 1)[1]
+            if i + 1 >= len(body):
+                raise ValueError("Setup action without coordinate")
+            point = body[i + 1].split(":", 1)[1]
             coords = token_to_coords(point, board_size)
-            if token.startswith("AB:"):
+            if token == "go:setup_b":
                 board.apply_setup([coords], [], [])
-            elif token.startswith("AW:"):
+            elif token == "go:setup_w":
                 board.apply_setup([], [coords], [])
             else:
                 board.apply_setup([], [], [coords])
             position_history = [_board_position_key(board)]
+            i += 2
             continue
-        seen_setup = False
-        if token in {"b:pass", "w:pass"}:
-            continue
-        if token.startswith(("b:", "w:")):
-            color, point = token.split(":", 1)
+        if token in ("go:b", "go:w"):
+            seen_setup = False
+            if i + 1 >= len(body):
+                raise ValueError("Move action without coordinate")
+            target = body[i + 1]
+            if target == "go:pass":
+                i += 2
+                continue
+            color = token.split(":", 1)[1]
+            point = target.split(":", 1)[1]
             row, col = token_to_coords(point, board_size)
             board.play(row, col, color)
             position_key = _board_position_key(board)
@@ -71,6 +83,7 @@ def validate_go_token_sequence(tokens):
             if not use_positional_superko and len(position_history) >= 2 and position_key == position_history[-2]:
                 raise ValueError("Go sequence violates simple ko")
             position_history.append(position_key)
+            i += 2
             continue
         raise ValueError(f"Invalid Go token: {token}")
     return True
@@ -120,9 +133,12 @@ def parse_sgf_to_tokens(sgf_path):
                 row, col = coords
                 if not (0 <= row < board_size and 0 <= col < board_size):
                     raise ValueError(f"Setup point out of range: {coords}")
-            setup_tokens.extend(f"AB:{coords_to_token(c, board_size)}" for c in sorted(black_stones))
-            setup_tokens.extend(f"AW:{coords_to_token(c, board_size)}" for c in sorted(white_stones))
-            setup_tokens.extend(f"AE:{coords_to_token(c, board_size)}" for c in sorted(empty_points))
+            for c in sorted(black_stones):
+                setup_tokens.extend(["go:setup_b", f"go:{coords_to_token(c, board_size)}"])
+            for c in sorted(white_stones):
+                setup_tokens.extend(["go:setup_w", f"go:{coords_to_token(c, board_size)}"])
+            for c in sorted(empty_points):
+                setup_tokens.extend(["go:setup_e", f"go:{coords_to_token(c, board_size)}"])
 
         append_setup_tokens(root, allow_non_root=True)
 
@@ -134,22 +150,22 @@ def parse_sgf_to_tokens(sgf_path):
             if move is not None and move[0] is not None:
                 color, coords = move
                 if coords is None:
-                    moves.append(f"{color}:pass")
+                    moves.extend([f"go:{color}", "go:pass"])
                 else:
                     row, col = coords
                     if not (0 <= row < board_size and 0 <= col < board_size):
                         raise ValueError(f"Move point out of range: {coords}")
-                    moves.append(f"{color}:{coords_to_token(coords, board_size)}")
+                    moves.extend([f"go:{color}", f"go:{coords_to_token(coords, board_size)}"])
 
         # Quality Filter: Skip empty or extremely short games
-        if len(moves) < 10:
+        if len(moves) < 20:
             return None, None
 
-        context_tokens = [f"SZ:{board_size}"]
-        for prefix, prop in (("KM", "KM"), ("RU", "RU"), ("HA", "HA")):
+        context_tokens = [f"go:sz:{board_size}"]
+        for prefix, prop in (("km", "KM"), ("ru", "RU"), ("ha", "HA")):
             value = get_sgf_property(root, prop, None)
             if value not in (None, "Unknown", ""):
-                context_tokens.append(f"{prefix}:{str(value).replace(' ', '_')}")
+                context_tokens.append(f"go:{prefix}:{str(value).replace(' ', '_')}")
         tokens = ["<bos>", "<go>"] + context_tokens + setup_tokens + moves + ["<eos>"]
         validate_go_token_sequence(tokens)
 
@@ -162,8 +178,8 @@ def parse_sgf_to_tokens(sgf_path):
             "komi": get_sgf_property(root, "KM", None),
             "handicap": get_sgf_property(root, "HA", None),
             "rules": get_sgf_property(root, "RU", None),
-            "setup_count": len(setup_tokens),
-            "move_count": len(moves),
+            "setup_count": len(setup_tokens) // 2,
+            "move_count": len(moves) // 2,
             "filename": os.path.basename(sgf_path),
             "source_path": str(Path(sgf_path).resolve()),
             "seat_count": 2,

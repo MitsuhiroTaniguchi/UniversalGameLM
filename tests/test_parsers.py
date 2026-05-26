@@ -72,7 +72,8 @@ class TestUniversalGameParsers(unittest.TestCase):
             tokens, meta = games[0]
             self.assertEqual(tokens[0], "<bos>")
             self.assertEqual(tokens[1], "<chess>")
-            self.assertEqual(tokens[2], "e2e4")
+            self.assertEqual(tokens[2], "ch:w:e2")
+            self.assertEqual(tokens[3], "ch:e4")
             self.assertEqual(tokens[-1], "<eos>")
             self.assertEqual(meta["white"], "Player1")
             self.assertEqual(meta["game_index"], 1)
@@ -105,10 +106,13 @@ class TestUniversalGameParsers(unittest.TestCase):
             self.assertIsNotNone(tokens)
             self.assertEqual(tokens[0], "<bos>")
             self.assertEqual(tokens[1], "<go>")
-            self.assertEqual(tokens[2], "SZ:19")
-            self.assertEqual(tokens[3], "b:pd")
-            self.assertEqual(tokens[4], "w:dd")
-            self.assertEqual(tokens[5], "b:pp")
+            self.assertEqual(tokens[2], "go:sz:19")
+            self.assertEqual(tokens[3], "go:b")
+            self.assertEqual(tokens[4], "go:pd")
+            self.assertEqual(tokens[5], "go:w")
+            self.assertEqual(tokens[6], "go:dd")
+            self.assertEqual(tokens[7], "go:b")
+            self.assertEqual(tokens[8], "go:pp")
             self.assertEqual(tokens[-1], "<eos>")
             self.assertEqual(meta["black"], "BlackPlayer")
             self.assertEqual(meta["white"], "WhitePlayer")
@@ -123,9 +127,11 @@ class TestUniversalGameParsers(unittest.TestCase):
             temp_path = f.name
         try:
             tokens, meta = parse_sgf_to_tokens(temp_path)
-            self.assertIn("AB:pd", tokens)
-            self.assertIn("AB:dd", tokens)
-            self.assertIn("AW:pp", tokens)
+            self.assertIn("go:setup_b", tokens)
+            self.assertIn("go:pd", tokens)
+            self.assertIn("go:dd", tokens)
+            self.assertIn("go:setup_w", tokens)
+            self.assertIn("go:pp", tokens)
             self.assertEqual(meta["setup_count"], 3)
         finally:
             os.remove(temp_path)
@@ -137,8 +143,8 @@ class TestUniversalGameParsers(unittest.TestCase):
             temp_path = f.name
         try:
             tokens, meta = parse_sgf_to_tokens(temp_path)
-            self.assertIn("KM:0.0", tokens)
-            self.assertIn("HA:0", tokens)
+            self.assertIn("go:km:0.0", tokens)
+            self.assertIn("go:ha:0", tokens)
             self.assertEqual(meta["komi"], 0.0)
             self.assertEqual(meta["handicap"], 0)
         finally:
@@ -146,10 +152,10 @@ class TestUniversalGameParsers(unittest.TestCase):
 
     def test_go_validation_rejects_repeated_positions(self):
         tokens = [
-            "<bos>", "<go>", "SZ:5",
-            "AB:be", "AB:ad", "AB:bc",
-            "AW:bd", "AW:ce", "AW:dd", "AW:cc",
-            "b:cd", "w:bd", "<eos>",
+            "<bos>", "<go>", "go:sz:5",
+            "go:setup_b", "go:be", "go:setup_b", "go:ad", "go:setup_b", "go:bc",
+            "go:setup_w", "go:bd", "go:setup_w", "go:ce", "go:setup_w", "go:dd", "go:setup_w", "go:cc",
+            "go:b", "go:cd", "go:w", "go:bd", "<eos>",
         ]
         with self.assertRaises(ValueError):
             from src.go_parser import validate_go_token_sequence
@@ -188,7 +194,7 @@ class TestUniversalGameParsers(unittest.TestCase):
             tokens, meta = games[0]
             self.assertEqual(tokens[0], "<bos>")
             self.assertEqual(tokens[1], "<othello>")
-            self.assertEqual(tokens[2:6], TERMINAL_OTHELLO_MOVES[:4])
+            self.assertEqual(tokens[2:6], ["ot:b:d3", "ot:w:c3", "ot:b:b3", "ot:w:b2"])
             self.assertEqual(tokens[-1], "<eos>")
             self.assertEqual(meta["black"], "PlayerB")
         finally:
@@ -204,7 +210,7 @@ class TestUniversalGameParsers(unittest.TestCase):
         with self.assertRaises(ProductionDatasetError):
             validate_entry({
                 "game": "othello",
-                "tokens": ["<bos>", "<othello>", "f5", "f5", "c3", "d3", "<eos>"],
+                "tokens": ["<bos>", "<othello>", "ot:b:f5", "ot:w:f5", "ot:b:c3", "ot:w:d3", "<eos>"],
             })
 
     def test_othello_validation_can_allow_nonterminal_prefixes(self):
@@ -254,14 +260,14 @@ class TestUniversalGameParsers(unittest.TestCase):
         with self.assertRaises(ProductionDatasetError):
             validate_entry({
                 "game": "shogi",
-                "tokens": ["<bos>", "<shogi>", "5a5b", "END:resign", "<eos>"],
+                "tokens": ["<bos>", "<shogi>", "sh:b:5a", "sh:5b", "sh:end:resign", "<eos>"],
                 "metadata": {"seat_count": 2, "view_type": "complete"},
             })
 
     def test_validate_entry_accepts_legal_shogi_prefix(self):
         validate_entry({
             "game": "shogi",
-            "tokens": ["<bos>", "<shogi>", "7g7f", "3c3d", "END:resign", "<eos>"],
+            "tokens": ["<bos>", "<shogi>", "sh:b:7g", "sh:7f", "sh:w:3c", "sh:3d", "sh:end:resign", "<eos>"],
             "metadata": {"seat_count": 2, "view_type": "complete"},
         })
 
@@ -270,14 +276,14 @@ class TestUniversalGameParsers(unittest.TestCase):
         tokens, meta = simulator.simulate_hand()
         self.assertEqual(tokens[0], "<bos>")
         self.assertEqual(tokens[1], "<poker>")
-        self.assertEqual(tokens[2], "view_complete")
+        self.assertEqual(tokens[2], "view:complete")
         self.assertEqual(tokens[-1], "<eos>")
         self.assertFalse(any(t.startswith("H:") for t in tokens))
         self.assertFalse(any(re.search(r"[br]\d+", t) for t in tokens))
-        self.assertIn("act:post_small_blind", tokens)
-        self.assertIn("act:post_big_blind", tokens)
+        self.assertIn("pk:act:post_small_blind", tokens)
+        self.assertIn("pk:act:post_big_blind", tokens)
         self.assertFalse(any(token.startswith("street:") for token in tokens))
-        self.assertTrue(any(t.startswith("winner:") for t in tokens))
+        self.assertTrue(any(t.startswith("pk:winner:") for t in tokens))
         self.assertIsNotNone(meta["winner"])
         validate_entry({"game": "poker", "tokens": tokens, "metadata": meta})
         self.assertEqual(meta["source"], "synthetic_simulator")
@@ -286,14 +292,14 @@ class TestUniversalGameParsers(unittest.TestCase):
         street_has_bet = False
         in_postflop_street = False
         for token in tokens:
-            if token in {"act:preflop", "act:flop", "act:turn", "act:river"}:
-                in_postflop_street = token != "act:preflop"
+            if token in {"pk:act:preflop", "pk:act:flop", "pk:act:turn", "pk:act:river"}:
+                in_postflop_street = token != "pk:act:preflop"
                 street_has_bet = False
-            elif token in {"act:bet", "act:raise", "act:post_big_blind"}:
+            elif token in {"pk:act:bet", "pk:act:raise", "pk:act:post_big_blind"}:
                 street_has_bet = True
-            elif in_postflop_street and token == "act:call":
+            elif in_postflop_street and token == "pk:act:call":
                 self.assertTrue(street_has_bet)
-            elif in_postflop_street and token == "act:check":
+            elif in_postflop_street and token == "pk:act:check":
                 self.assertFalse(street_has_bet)
 
     def test_poker_simulator_dataset_emits_all_views(self):
@@ -305,8 +311,8 @@ class TestUniversalGameParsers(unittest.TestCase):
         self.assertEqual(view_types.count("omniscient"), 1)
         for tokens, meta in entries:
             validate_entry({"game": "poker", "tokens": tokens, "metadata": meta})
-        self.assertTrue(any(token.startswith("private_card:") for token in entries[-1][0]))
-        self.assertTrue(any(token.startswith("undealt_card:") for token in entries[-1][0]))
+        self.assertIn("pk:private_card", entries[-1][0])
+        self.assertIn("pk:undealt_card", entries[-1][0])
 
     def test_poker_simulator_can_raise_preflop(self):
         def rig_shuffle(deck):
@@ -316,7 +322,7 @@ class TestUniversalGameParsers(unittest.TestCase):
 
         with mock.patch("src.poker_parser.random.shuffle", rig_shuffle):
             tokens, meta = PokerHandSimulator(num_seats=2).simulate_hand()
-        self.assertIn("act:raise", tokens)
+        self.assertIn("pk:act:raise", tokens)
         validate_entry({"game": "poker", "tokens": tokens, "metadata": meta})
 
     def test_poker_simulator_omniscient_keeps_undealt_board_cards_after_prefold(self):
@@ -328,9 +334,9 @@ class TestUniversalGameParsers(unittest.TestCase):
         with mock.patch("src.poker_parser.random.shuffle", rig_shuffle):
             entries = list(PokerHandSimulator(num_seats=2).simulate_hand_views())
         omniscient = entries[-1][0]
-        self.assertNotIn("act:flop", omniscient)
-        self.assertEqual(sum(token.startswith("private_card:") for token in omniscient), 4)
-        self.assertEqual(sum(token.startswith("undealt_card:") for token in omniscient), 48)
+        self.assertNotIn("pk:act:flop", omniscient)
+        self.assertEqual(sum(1 for token in omniscient if token == "pk:private_card"), 4)
+        self.assertEqual(sum(1 for token in omniscient if token == "pk:undealt_card"), 48)
         validate_entry({"game": "poker", "tokens": omniscient, "metadata": entries[-1][1]})
 
     def test_poker_postflop_simulator_can_fold_and_raise_legally(self):
@@ -342,12 +348,12 @@ class TestUniversalGameParsers(unittest.TestCase):
             should_raise=lambda seat: seat == 3,
             bet_amount=40,
         )
-        self.assertIn("act:raise", tokens)
-        self.assertIn("act:fold", tokens)
+        self.assertIn("pk:act:raise", tokens)
+        self.assertIn("pk:act:fold", tokens)
         self.assertEqual(remaining, [1, 2, 3])
         p2_call_positions = [
             index for index, token in enumerate(tokens[:-1])
-            if token == "seat:p2" and tokens[index + 1] == "act:call"
+            if token == "pk:seat:p2" and tokens[index + 1] == "pk:act:call"
         ]
         self.assertEqual(len(p2_call_positions), 2)
         check_tokens, check_remaining = simulator._postflop_betting_round(
@@ -358,7 +364,7 @@ class TestUniversalGameParsers(unittest.TestCase):
             bet_amount=100,
         )
         self.assertEqual(check_remaining, [1, 2, 3])
-        self.assertEqual(check_tokens, ["seat:p1", "act:check", "seat:p2", "act:check", "seat:p3", "act:check"])
+        self.assertEqual(check_tokens, ["pk:seat:p1", "pk:act:check", "pk:seat:p2", "pk:act:check", "pk:seat:p3", "pk:act:check"])
         bluff_tokens, bluff_remaining = simulator._postflop_betting_round(
             [1, 2, 3],
             should_bet=lambda seat: seat == 1,
@@ -370,9 +376,9 @@ class TestUniversalGameParsers(unittest.TestCase):
         p1_responses = [
             bluff_tokens[index + 1]
             for index, token in enumerate(bluff_tokens[:-1])
-            if token == "seat:p1"
+            if token == "pk:seat:p1"
         ]
-        self.assertEqual(p1_responses[-1], "act:fold")
+        self.assertEqual(p1_responses[-1], "pk:act:fold")
 
     def test_poker_preflop_reraises_increase_amount_and_get_responses(self):
         simulator = PokerHandSimulator(num_seats=4)
@@ -384,13 +390,13 @@ class TestUniversalGameParsers(unittest.TestCase):
         }
         tokens, remaining = simulator._preflop_betting_round(hands, [1, 2, 3, 4], 20)
         self.assertEqual(remaining, [1, 2, 3, 4])
-        raise_positions = [index for index, token in enumerate(tokens) if token == "act:raise"]
+        raise_positions = [index for index, token in enumerate(tokens) if token == "pk:act:raise"]
         self.assertEqual(len(raise_positions), 2)
         first_amount = tokens[raise_positions[0] + 1:raise_positions[0] + 3]
         second_amount = tokens[raise_positions[1] + 1:raise_positions[1] + 4]
-        self.assertEqual(first_amount, ["AMT:6", "AMT:0"])
-        self.assertEqual(second_amount, ["AMT:1", "AMT:2", "AMT:0"])
-        self.assertGreater(tokens.count("act:call"), 2)
+        self.assertEqual(first_amount, ["pk:amt:6", "pk:amt:0"])
+        self.assertEqual(second_amount, ["pk:amt:1", "pk:amt:2", "pk:amt:0"])
+        self.assertGreater(tokens.count("pk:act:call"), 2)
 
     def test_poker_preflop_bb_can_raise_over_limpers(self):
         simulator = PokerHandSimulator(num_seats=2)
@@ -402,8 +408,8 @@ class TestUniversalGameParsers(unittest.TestCase):
         tokens, remaining = simulator._preflop_betting_round(hands, original_active, 20)
         self.assertEqual(original_active, [1, 2])
         self.assertEqual(remaining, [1, 2])
-        p2_index = tokens.index("seat:p2")
-        self.assertEqual(tokens[p2_index + 1], "act:raise")
+        p2_index = tokens.index("pk:seat:p2")
+        self.assertEqual(tokens[p2_index + 1], "pk:act:raise")
 
     def test_poker_preflop_does_not_mutate_active_players(self):
         simulator = PokerHandSimulator(num_seats=3)
@@ -437,7 +443,7 @@ class TestUniversalGameParsers(unittest.TestCase):
     def test_validate_entry_accepts_chess960_spaced_variant_token(self):
         validate_entry({
             "game": "chess",
-            "tokens": ["<bos>", "<chess>", "VARIANT:chess_960", "<eos>"],
+            "tokens": ["<bos>", "<chess>", "ch:rule:variant:chess_960", "<eos>"],
             "metadata": {"seat_count": 2, "view_type": "complete"},
         })
 
@@ -445,7 +451,7 @@ class TestUniversalGameParsers(unittest.TestCase):
         with self.assertRaises(ProductionDatasetError):
             validate_entry({
                 "game": "poker",
-                "tokens": ["<bos>", "<poker>", "view_complete", "seat:p1", "act:raise", "AMT:6", "AMT:0", "<eos>"],
+                "tokens": ["<bos>", "<poker>", "view:complete", "pk:seat:p1", "pk:act:raise", "pk:amt:6", "pk:amt:0", "<eos>"],
                 "metadata": {"seat_count": 2, "view_type": "complete"},
             })
 
@@ -453,10 +459,10 @@ class TestUniversalGameParsers(unittest.TestCase):
         validate_entry({
             "game": "poker",
             "tokens": [
-                "<bos>", "<poker>", "view_complete",
-                "seat:p1", "act:post_ante", "AMT:1", "AMT:0",
-                "seat:p2", "act:post_ante", "AMT:1", "AMT:0",
-                "seat:p1", "act:raise", "AMT:6", "AMT:0",
+                "<bos>", "<poker>", "view:complete",
+                "pk:seat:p1", "pk:act:post_ante", "pk:amt:1", "pk:amt:0",
+                "pk:seat:p2", "pk:act:post_ante", "pk:amt:1", "pk:amt:0",
+                "pk:seat:p1", "pk:act:raise", "pk:amt:6", "pk:amt:0",
                 "<eos>",
             ],
             "metadata": {"seat_count": 2, "view_type": "complete"},
@@ -466,9 +472,9 @@ class TestUniversalGameParsers(unittest.TestCase):
         validate_entry({
             "game": "poker",
             "tokens": [
-                "<bos>", "<poker>", "view_complete",
-                "seat:p1", "act:post_blind", "AMT:2", "AMT:0",
-                "seat:p2", "act:raise", "AMT:6", "AMT:0",
+                "<bos>", "<poker>", "view:complete",
+                "pk:seat:p1", "pk:act:post_blind", "pk:amt:2", "pk:amt:0",
+                "pk:seat:p2", "pk:act:raise", "pk:amt:6", "pk:amt:0",
                 "<eos>",
             ],
             "metadata": {"seat_count": 2, "view_type": "complete"},
@@ -496,21 +502,21 @@ HA H9 H5 H2
             tokens, meta = boards[0]
             self.assertEqual(tokens[0], "<bos>")
             self.assertEqual(tokens[1], "<bridge>")
-            self.assertEqual(tokens[2], "view_complete")
-            self.assertIn("dealer:N", tokens)
-            self.assertIn("bid:1N", tokens)
-            self.assertIn("play:S:Ah", tokens)
+            self.assertEqual(tokens[2], "view:complete")
+            self.assertIn("br:dealer:N", tokens)
+            self.assertIn("br:bid:1N", tokens)
+            self.assertIn("br:play:S", tokens)
             self.assertEqual(meta["seat_count"], 4)
-            self.assertFalse(any(token.startswith("hand:") for token in tokens))
+            self.assertFalse(any(token.startswith("br:hand:") for token in tokens))
             view_types = [entry_meta["view_type"] for _, entry_meta in boards]
             self.assertEqual(view_types.count("imperfect"), 4)
             self.assertIn("omniscient", view_types)
             for view_tokens, view_meta in boards:
                 validate_entry({"game": "bridge", "tokens": view_tokens, "metadata": view_meta})
                 if view_meta["view_type"] == "imperfect":
-                    self.assertEqual(sum(token.startswith("hand:") for token in view_tokens), 13)
+                    self.assertEqual(sum(token.startswith("br:hand:") for token in view_tokens), 13)
                 if view_meta["view_type"] == "omniscient":
-                    self.assertEqual(sum(token.startswith("hand:") for token in view_tokens), 52)
+                    self.assertEqual(sum(token.startswith("br:hand:") for token in view_tokens), 52)
         finally:
             os.remove(temp_path)
 
@@ -556,8 +562,8 @@ ST S6 S2 SA
             boards = list(parse_pbn_to_tokens(temp_path))
             self.assertEqual(len(boards), 6)
             tokens, meta = boards[0]
-            self.assertIn("trump:h", tokens)
-            self.assertIn("play:E:Ts", tokens)
+            self.assertIn("br:trump:h", tokens)
+            self.assertIn("br:play:E", tokens)
             for view_tokens, view_meta in boards:
                 validate_entry({"game": "bridge", "tokens": view_tokens, "metadata": view_meta})
         finally:
@@ -582,7 +588,7 @@ HA H2 H7 H3
         try:
             boards = list(parse_pbn_to_tokens(temp_path))
             self.assertEqual(len(boards), 6)
-            self.assertIn("play_leader:E", boards[0][0])
+            self.assertIn("br:play_leader:E", boards[0][0])
         finally:
             os.remove(temp_path)
 
@@ -631,21 +637,21 @@ HA H2 H7 H3
             tokenizer_dir = os.path.join(temp_dir, "mahjong_tokenizer")
             os.makedirs(tokenizer_dir)
             with open(os.path.join(tokenizer_dir, "vocab.txt"), "w", encoding="utf-8") as f:
-                f.write("<pad>\n<unk>\n<bos>\n<eos>\nrule_riichi\nview_complete\nrule_chess\ne2e4\ne7e5\ng1f3\nb8c6\n")
+                f.write("<pad>\n<unk>\n<bos>\n<eos>\nview:complete\ne2e4\ne7e5\ng1f3\nb8c6\n")
             tokenizer = UniversalGameTokenizer.from_mahjonglm_assets(tokenizer_dir)
             entry = {
                 "game": "chess",
-                "tokens": ["<bos>", "<chess>", "e2e4", "e7e5", "g1f3", "b8c6", "<eos>"],
+                "tokens": ["<bos>", "<chess>", "view:complete", "e2e4", "e7e5", "g1f3", "b8c6", "<eos>"],
                 "metadata": {"date": "2024.01.01", "source_id": "sample"},
             }
-            self.assertEqual(tokens_to_mahjonglm_stream(entry), ["rule_chess", "view_complete", "e2e4", "e7e5", "g1f3", "b8c6"])
+            self.assertEqual(tokens_to_mahjonglm_stream(entry), ["view:complete", "e2e4", "e7e5", "g1f3", "b8c6"])
             row = entry_to_mahjonglm_row(entry, tokenizer)
             self.assertEqual(set(row), {"game_id", "year", "seat_count", "view_type", "viewer_seat", "length", "input_ids", "tokenizer_fingerprint"})
             self.assertEqual(row["year"], 2024)
             self.assertEqual(row["seat_count"], 2)
             self.assertEqual(row["view_type"], "complete")
             self.assertIsNone(row["viewer_seat"])
-            self.assertEqual(row["length"], 6)
+            self.assertEqual(row["length"], 5)
             self.assertEqual(row["tokenizer_fingerprint"], tokenizer.fingerprint())
             self.assertNotIn(tokenizer.vocab["<bos>"], row["input_ids"])
             self.assertNotIn(tokenizer.vocab["<eos>"], row["input_ids"])
@@ -653,11 +659,11 @@ HA H2 H7 H3
     def test_mahjonglm_metadata_requires_poker_seat_count(self):
         row = {
             "game": "poker",
-            "tokens": ["<bos>", "<poker>", "view_complete", "act:fold", "<eos>"],
+            "tokens": ["<bos>", "<poker>", "view:complete", "pk:act:fold", "<eos>"],
             "metadata": {},
         }
         stream = tokens_to_mahjonglm_stream(row)
-        self.assertEqual(stream[:2], ["rule_poker", "view_complete"])
+        self.assertEqual(stream[0], "view:complete")
         from src.mahjonglm_compat import normalize_mahjonglm_metadata
         with self.assertRaises(ValueError):
             normalize_mahjonglm_metadata(row)
@@ -784,9 +790,12 @@ HA H2 H7 H3
                     validate_entry({"game": "poker", "tokens": ["<bos>", "<poker>", token, "<eos>"]})
 
     def test_validate_entry_bounds_poker_imperfect_private_cards(self):
-        one_card = ["<bos>", "<poker>", "view_imperfect_p1", "private_card:p1:Ah", "seat:p1", "act:fold", "<eos>"]
+        one_card = ["<bos>", "<poker>", "view:imperfect:1", "pk:private_card", "pk:seat:p1", "pk:A", "pk:h", "pk:seat:p1", "pk:act:fold", "<eos>"]
         validate_entry({"game": "poker", "tokens": one_card, "metadata": {"seat_count": 2, "view_type": "imperfect"}})
-        too_many = ["<bos>", "<poker>", "view_imperfect_p1"] + [f"private_card:p1:{rank}h" for rank in "A23456789TJ"] + ["seat:p1", "act:fold", "<eos>"]
+        too_many_cards = []
+        for rank in "A23456789TJ":
+            too_many_cards.extend(["pk:private_card", "pk:seat:p1", f"pk:{rank}", "pk:h"])
+        too_many = ["<bos>", "<poker>", "view:imperfect:1"] + too_many_cards + ["pk:seat:p1", "pk:act:fold", "<eos>"]
         with self.assertRaises(ProductionDatasetError):
             validate_entry({"game": "poker", "tokens": too_many, "metadata": {"seat_count": 2, "view_type": "imperfect"}})
 
@@ -802,10 +811,10 @@ HA H2 H7 H3
             self.assertNotIn("alice", tokens)
             self.assertNotIn("deal_hole_p1_ahad", tokens)
             self.assertEqual(tokens[2:], [
-                "view_complete",
-                "seat:p1", "act:post_blind", "AMT:5", "AMT:0",
-                "seat:p2", "act:post_blind", "AMT:1", "AMT:0", "AMT:0",
-                "seat:p1", "act:call",
+                "view:complete",
+                "pk:seat:p1", "pk:act:post_blind", "pk:amt:5", "pk:amt:0",
+                "pk:seat:p2", "pk:act:post_blind", "pk:amt:1", "pk:amt:0", "pk:amt:0",
+                "pk:seat:p1", "pk:act:call",
                 "<eos>",
             ])
             self.assertEqual(meta["view_type"], "complete")
@@ -834,12 +843,12 @@ HA H2 H7 H3
             hands = list(parse_phh_to_tokens(temp_path))
             self.assertEqual(len(hands), 4)
             complete_tokens = hands[0][0]
-            self.assertIn("act:post_small_blind", complete_tokens)
-            self.assertIn("act:post_big_blind", complete_tokens)
-            self.assertIn("act:call", complete_tokens)
-            self.assertIn("act:check", complete_tokens)
-            self.assertIn("act:bet", complete_tokens)
-            self.assertIn("act:fold", complete_tokens)
+            self.assertIn("pk:act:post_small_blind", complete_tokens)
+            self.assertIn("pk:act:post_big_blind", complete_tokens)
+            self.assertIn("pk:act:call", complete_tokens)
+            self.assertIn("pk:act:check", complete_tokens)
+            self.assertIn("pk:act:bet", complete_tokens)
+            self.assertIn("pk:act:fold", complete_tokens)
         finally:
             os.remove(temp_path)
 
@@ -865,9 +874,9 @@ actions = [
         try:
             hands = list(parse_phh_to_tokens(temp_path))
             self.assertEqual(len(hands), 8)
-            self.assertIn("VARIANT:nt", hands[0][0])
-            self.assertIn("VARIANT:nt", hands[4][0])
-            self.assertIn("STARTING_STACKS:BEGIN", hands[4][0])
+            self.assertIn("pk:VARIANT:nt", hands[0][0])
+            self.assertIn("pk:VARIANT:nt", hands[4][0])
+            self.assertIn("pk:STARTING_STACKS:BEGIN", hands[4][0])
         finally:
             os.remove(temp_path)
 
@@ -891,9 +900,9 @@ actions = [
             temp_path = f.name
         try:
             hands = list(parse_phh_to_tokens(temp_path))
-            self.assertIn("VARIANT:nt", hands[0][0])
-            self.assertIn("VARIANT:ft", hands[4][0])
-            self.assertNotIn("VARIANT:nt", hands[4][0])
+            self.assertIn("pk:VARIANT:nt", hands[0][0])
+            self.assertIn("pk:VARIANT:ft", hands[4][0])
+            self.assertNotIn("pk:VARIANT:nt", hands[4][0])
         finally:
             os.remove(temp_path)
 
@@ -938,7 +947,7 @@ actions = [
         try:
             hands = list(parse_phh_to_tokens(temp_path))
             self.assertEqual(len(hands), 4)
-            self.assertIn("act:post_blind", hands[0][0])
+            self.assertIn("pk:act:post_blind", hands[0][0])
         finally:
             os.remove(temp_path)
 
@@ -971,31 +980,27 @@ actions = [
             self.assertEqual(complete_meta["seat_count"], 2)
             self.assertEqual(complete_meta["view_rows_per_hand"], 4)
             self.assertEqual(complete_meta["move_count"], poker_action_count(complete_tokens))
-            self.assertIn("view_complete", complete_tokens)
-            self.assertIn("VARIANT:nt", complete_tokens)
-            self.assertIn("STARTING_STACKS:BEGIN", complete_tokens)
-            self.assertIn("act:call", complete_tokens)
-            self.assertIn("act:raise", complete_tokens)
-            self.assertNotIn("act:cc", complete_tokens)
-            self.assertNotIn("act:cbr", complete_tokens)
-            self.assertIn("AMT:3", complete_tokens)
-            self.assertIn("act:deal_board", complete_tokens)
-            self.assertIn("card:2c", complete_tokens)
-            self.assertIn("card:3d", complete_tokens)
-            self.assertIn("card:4h", complete_tokens)
-            self.assertIn("act:hidden", complete_tokens)
+            self.assertIn("view:complete", complete_tokens)
+            self.assertIn("pk:VARIANT:nt", complete_tokens)
+            self.assertIn("pk:STARTING_STACKS:BEGIN", complete_tokens)
+            self.assertIn("pk:act:call", complete_tokens)
+            self.assertIn("pk:act:raise", complete_tokens)
+            self.assertNotIn("pk:act:cc", complete_tokens)
+            self.assertNotIn("pk:act:cbr", complete_tokens)
+            self.assertIn("pk:amt:3", complete_tokens)
+            self.assertIn("pk:act:deal_board", complete_tokens)
+            self.assertIn("pk:card", complete_tokens)
+            self.assertIn("pk:act:hidden", complete_tokens)
             self.assertFalse(any("AhAd" in token or "KcKd" in token for token in complete_tokens))
             self.assertEqual(complete_meta["private_actions_excluded"], 2)
-            self.assertIn("private_card:p1:Ah", imperfect[1][0])
-            self.assertIn("private_card:p1:Ad", imperfect[1][0])
-            self.assertNotIn("private_card:p2:Kc", imperfect[1][0])
-            self.assertIn("private_card:p2:Kc", imperfect[2][0])
-            self.assertIn("private_card:p2:Kd", imperfect[2][0])
+            self.assertIn("pk:private_card", imperfect[1][0])
+            self.assertIn("pk:seat:p1", imperfect[1][0])
+            self.assertIn("pk:private_card", imperfect[2][0])
+            self.assertIn("pk:seat:p2", imperfect[2][0])
             omniscient_tokens, _ = views["omniscient"]
-            self.assertIn("view_omniscient", omniscient_tokens)
-            self.assertIn("private_card:p1:Ah", omniscient_tokens)
-            self.assertIn("private_card:p2:Kc", omniscient_tokens)
-            self.assertTrue(any(token.startswith("undealt_card:") for token in omniscient_tokens))
+            self.assertIn("view:omniscient", omniscient_tokens)
+            self.assertIn("pk:private_card", omniscient_tokens)
+            self.assertIn("pk:undealt_card", omniscient_tokens)
 
     def test_phh_parser_normalizes_long_show_or_muck_actions(self):
         phh = """variant = 'NT'
@@ -1012,10 +1017,9 @@ actions = [
         try:
             hands = list(parse_phh_to_tokens(temp_path))
             complete_tokens = hands[0][0]
-            self.assertIn("seat:p1", complete_tokens)
-            self.assertIn("act:show", complete_tokens)
-            self.assertIn("card:Ah", complete_tokens)
-            self.assertIn("card:Ad", complete_tokens)
+            self.assertIn("pk:seat:p1", complete_tokens)
+            self.assertIn("pk:act:show", complete_tokens)
+            self.assertIn("pk:card", complete_tokens)
         finally:
             os.remove(temp_path)
 
@@ -1056,22 +1060,49 @@ actions = [
             os.remove(temp_path)
 
     def test_stats_excludes_context_tokens_from_move_counts(self):
-        self.assertFalse(is_counted_move_token("TURN:black"))
-        self.assertFalse(is_counted_move_token("SZ:19"))
-        self.assertFalse(is_counted_move_token("KM:6.5"))
-        self.assertFalse(is_counted_move_token("dealer:N"))
-        self.assertFalse(is_counted_move_token("AMT:5"))
-        self.assertFalse(is_counted_move_token("ANTE_TRIMMING_STATUS:false"))
-        self.assertFalse(is_counted_move_token("BETTING_TYPE:no_limit"))
-        self.assertFalse(is_counted_move_token("seat:p1"))
-        self.assertFalse(is_counted_move_token("card:Ah"))
-        self.assertFalse(is_counted_move_token("showdown:p1"))
-        self.assertFalse(is_counted_move_token("winner:p1"))
-        self.assertFalse(is_counted_move_token("act:flop"))
-        self.assertFalse(is_counted_move_token("act:deal_board"))
-        self.assertFalse(is_counted_move_token("act:hidden"))
-        self.assertTrue(is_counted_move_token("7g7f"))
-        self.assertTrue(is_counted_move_token("act:raise"))
+        self.assertFalse(is_counted_move_token("sh:turn:black"))
+        self.assertFalse(is_counted_move_token("sh:end:resign"))
+        self.assertFalse(is_counted_move_token("go:sz:19"))
+        self.assertFalse(is_counted_move_token("go:km:6.5"))
+        self.assertFalse(is_counted_move_token("br:dealer:N"))
+        self.assertFalse(is_counted_move_token("pk:amt:5"))
+        self.assertFalse(is_counted_move_token("pk:ANTE_TRIMMING_STATUS:false"))
+        self.assertFalse(is_counted_move_token("pk:BETTING_TYPE:no_limit"))
+        self.assertFalse(is_counted_move_token("pk:seat:p1"))
+        self.assertFalse(is_counted_move_token("pk:card"))
+        self.assertFalse(is_counted_move_token("pk:showdown:p1"))
+        self.assertFalse(is_counted_move_token("pk:winner:p1"))
+        self.assertFalse(is_counted_move_token("pk:act:flop"))
+        self.assertFalse(is_counted_move_token("pk:act:deal_board"))
+        self.assertFalse(is_counted_move_token("pk:act:hidden"))
+        self.assertFalse(is_counted_move_token("view:complete"))
+        self.assertFalse(is_counted_move_token("view:imperfect:1"))
+        self.assertFalse(is_counted_move_token("ch:rule:variant:standard"))
+        # Decomposed sub-tokens must not inflate move counts
+        self.assertFalse(is_counted_move_token("ch:e4"))
+        self.assertFalse(is_counted_move_token("ch:b5"))
+        self.assertFalse(is_counted_move_token("ch:=q"))
+        self.assertFalse(is_counted_move_token("sh:7f"))
+        self.assertFalse(is_counted_move_token("sh:+"))
+        self.assertFalse(is_counted_move_token("go:pd"))
+        self.assertFalse(is_counted_move_token("go:pass"))
+        self.assertFalse(is_counted_move_token("br:A"))
+        self.assertFalse(is_counted_move_token("br:h"))
+        self.assertFalse(is_counted_move_token("br:bid:N"))
+        self.assertFalse(is_counted_move_token("pk:A"))
+        self.assertFalse(is_counted_move_token("pk:h"))
+        # Action-initiator tokens count as moves
+        self.assertTrue(is_counted_move_token("ch:w:e2"))
+        self.assertTrue(is_counted_move_token("ch:b:e7"))
+        self.assertTrue(is_counted_move_token("sh:b:7g"))
+        self.assertTrue(is_counted_move_token("sh:w:3c"))
+        self.assertTrue(is_counted_move_token("go:b"))
+        self.assertTrue(is_counted_move_token("go:w"))
+        self.assertTrue(is_counted_move_token("br:play:S"))
+        self.assertTrue(is_counted_move_token("br:bid:1N"))
+        self.assertTrue(is_counted_move_token("br:bid:PASS"))
+        self.assertTrue(is_counted_move_token("ot:b:d3"))
+        self.assertTrue(is_counted_move_token("pk:act:raise"))
 
     def test_bridge_auction_allows_pass_before_redouble(self):
         mock_pbn = """[Event "Redouble"]
@@ -1134,8 +1165,8 @@ HA
                 validate_entry({"game": "bridge", "tokens": tokens, "metadata": meta})
 
             bad_tokens = list(boards[0][0])
-            play_index = bad_tokens.index("play:S:Ah")
-            bad_tokens[play_index] = "play:N:Ah"
+            play_index = bad_tokens.index("br:play:S")
+            bad_tokens[play_index] = "br:play:N"
             with self.assertRaises(ProductionDatasetError):
                 validate_entry({"game": "bridge", "tokens": bad_tokens, "metadata": boards[0][1]})
         finally:
@@ -1155,7 +1186,7 @@ HA
             temp_path = f.name
         try:
             tokens, meta = next(iter(parse_pbn_to_tokens(temp_path)))
-            self.assertIn("dealer:N", tokens)
+            self.assertIn("br:dealer:N", tokens)
             self.assertEqual(meta["dealer"], "N")
         finally:
             os.remove(temp_path)
@@ -1179,7 +1210,9 @@ HA H9 H5 H2
             imperfect_tokens, imperfect_meta = next((tokens, meta) for tokens, meta in boards if meta["viewer_seat"] == "S")
             validate_entry({"game": "bridge", "tokens": imperfect_tokens, "metadata": imperfect_meta})
             bad_tokens = list(imperfect_tokens)
-            bad_tokens[bad_tokens.index("play:S:Ah")] = "play:S:Ks"
+            play_idx = bad_tokens.index("br:play:S")
+            bad_tokens[play_idx + 1] = "br:K"
+            bad_tokens[play_idx + 2] = "br:s"
             with self.assertRaises(ProductionDatasetError):
                 validate_entry({"game": "bridge", "tokens": bad_tokens, "metadata": imperfect_meta})
         finally:
@@ -1252,8 +1285,8 @@ actions = [
         with tempfile.TemporaryDirectory() as temp_dir:
             cache_path = os.path.join(temp_dir, "cache.jsonl")
             rows = [
-                {"game": "poker", "tokens": ["<bos>", "<poker>", "view_complete", "seat:p1", "act:fold", "<eos>"], "metadata": {"seat_count": 2, "view_type": "complete"}},
-                {"game": "poker", "tokens": ["<bos>", "<poker>", "view_complete", "seat:p2", "act:fold", "<eos>"], "metadata": {"seat_count": 2, "view_type": "complete"}},
+                {"game": "poker", "tokens": ["<bos>", "<poker>", "view:complete", "pk:seat:p1", "pk:act:fold", "<eos>"], "metadata": {"seat_count": 2, "view_type": "complete"}},
+                {"game": "poker", "tokens": ["<bos>", "<poker>", "view:complete", "pk:seat:p2", "pk:act:fold", "<eos>"], "metadata": {"seat_count": 2, "view_type": "complete"}},
             ]
             with open(cache_path, "w", encoding="utf-8") as f:
                 for row in rows:
@@ -1278,9 +1311,9 @@ actions = [
         with tempfile.TemporaryDirectory() as temp_dir:
             cache_path = os.path.join(temp_dir, "cache.jsonl")
             rows = [
-                {"game": "poker", "tokens": ["<bos>", "<poker>", "view_complete", "seat:p1", "act:fold", "<eos>"], "metadata": {"seat_count": 2, "view_type": "complete"}},
-                {"game": "poker", "tokens": ["<bos>", "<poker>", "view_imperfect_p1", "private_card:p1:Ah", "seat:p1", "act:fold", "<eos>"], "metadata": {"seat_count": 2, "view_type": "imperfect", "viewer_seat": 1}},
-                {"game": "poker", "tokens": ["<bos>", "<poker>", "view_complete", "seat:p2", "act:fold", "<eos>"], "metadata": {"seat_count": 2, "view_type": "complete"}},
+                {"game": "poker", "tokens": ["<bos>", "<poker>", "view:complete", "pk:seat:p1", "pk:act:fold", "<eos>"], "metadata": {"seat_count": 2, "view_type": "complete"}},
+                {"game": "poker", "tokens": ["<bos>", "<poker>", "view:imperfect:1", "pk:private_card", "pk:seat:p1", "pk:A", "pk:h", "pk:seat:p1", "pk:act:fold", "<eos>"], "metadata": {"seat_count": 2, "view_type": "imperfect", "viewer_seat": 1}},
+                {"game": "poker", "tokens": ["<bos>", "<poker>", "view:complete", "pk:seat:p2", "pk:act:fold", "<eos>"], "metadata": {"seat_count": 2, "view_type": "complete"}},
             ]
             with open(cache_path, "w", encoding="utf-8") as f:
                 for row in rows:
@@ -1300,8 +1333,9 @@ actions = [
             tokenizer_dir = os.path.join(temp_dir, "mahjong_tokenizer")
             os.makedirs(tokenizer_dir)
             vocab_tokens = [
-                "<pad>", "<unk>", "<bos>", "<eos>", "rule_riichi", "view_complete",
-                "rule_chess", "rule_bridge", "e2e4", "e7e5", "g1f3", "b8c6", "f1b5", "a7a6", "b5a4",
+                "<pad>", "<unk>", "<bos>", "<eos>", "view:complete",
+                "ch:w:e2", "ch:e4", "ch:b:e7", "ch:e5", "ch:w:g1", "ch:f3",
+                "ch:b:b8", "ch:c6", "ch:w:f1", "ch:b5", "ch:b:a7", "ch:a6", "ch:w:b5", "ch:a4",
             ]
             with open(os.path.join(tokenizer_dir, "vocab.txt"), "w", encoding="utf-8") as f:
                 f.write("\n".join(vocab_tokens) + "\n")
@@ -1325,8 +1359,7 @@ actions = [
             self.assertEqual(row["year"], 2025)
             self.assertEqual(row["seat_count"], 2)
             self.assertEqual(row["view_type"], "complete")
-            self.assertEqual(row["input_ids"][0], tokenizer.vocab["rule_chess"])
-            self.assertEqual(row["input_ids"][1], tokenizer.vocab["view_complete"])
+            self.assertEqual(row["input_ids"][0], tokenizer.vocab["view:complete"])
             self.assertEqual(row["tokenizer_fingerprint"], result["tokenizer_fingerprint"])
 
     def test_shogi_parser_rejects_missing_terminal(self):

@@ -39,40 +39,41 @@ PRIVATE_POKER_TOKEN_PATTERNS = (
     re.compile(r"^show[_: -]?or[_: -]?muck[_: -]?hole", re.IGNORECASE),
 )
 POKER_STREET_ORDER = {
-    "act:preflop": 0,
-    "act:flop": 1,
-    "act:turn": 2,
-    "act:river": 3,
+    "pk:act:preflop": 0,
+    "pk:act:flop": 1,
+    "pk:act:turn": 2,
+    "pk:act:river": 3,
 }
 POKER_PLAYER_ACTIONS = {
-    "act:post_small_blind",
-    "act:post_big_blind",
-    "act:post_blind",
-    "act:post_ante",
-    "act:blind",
-    "act:ante",
-    "act:bet",
-    "act:call",
-    "act:check",
-    "act:fold",
-    "act:raise",
-    "act:show",
-    "act:muck",
+    "pk:act:post_small_blind",
+    "pk:act:post_big_blind",
+    "pk:act:post_blind",
+    "pk:act:post_ante",
+    "pk:act:blind",
+    "pk:act:ante",
+    "pk:act:bet",
+    "pk:act:call",
+    "pk:act:check",
+    "pk:act:fold",
+    "pk:act:raise",
+    "pk:act:show",
+    "pk:act:muck",
 }
 POKER_AMOUNT_REQUIRED_ACTIONS = {
-    "act:post_small_blind",
-    "act:post_big_blind",
-    "act:post_blind",
-    "act:post_ante",
-    "act:blind",
-    "act:ante",
-    "act:bet",
-    "act:raise",
+    "pk:act:post_small_blind",
+    "pk:act:post_big_blind",
+    "pk:act:post_blind",
+    "pk:act:post_ante",
+    "pk:act:blind",
+    "pk:act:ante",
+    "pk:act:bet",
+    "pk:act:raise",
 }
 POKER_NON_SEAT_ACTIONS = {
-    "act:deal_board",
-    "act:hidden",
+    "pk:act:deal_board",
+    "pk:act:hidden",
 }
+_POKER_RANK_SUIT_CHARS = set("AKQJThdcs98765432")
 
 
 class ProductionDatasetError(RuntimeError):
@@ -88,26 +89,28 @@ def validate_poker_public_sequence(tokens):
     pending_seat = False
     blinds_seen = False
     for index, token in enumerate(tokens[3:-1], start=3):
-        if token.startswith((
-            "VARIANT:",
-            "STARTING_STACKS:",
-            "MIN_BET:",
-            "ANTE_TRIMMING_STATUS:",
-            "BETTING_TYPE:",
-            "NUM:",
-            "AMT:",
-            "private_card:",
-            "undealt_card:",
-            "card:",
-            "showdown:",
-            "winner:",
-        )):
-            continue
-        if token.startswith(("BLINDS_OR_STRADDLES:", "ANTES:")):
+        if token.startswith(("pk:BLINDS_OR_STRADDLES:", "pk:ANTES:")):
             blinds_seen = True
             continue
-        if token.startswith("seat:"):
-            if not re.fullmatch(r"seat:p\d+", token):
+        if token.startswith((
+            "pk:VARIANT:",
+            "pk:STARTING_STACKS:",
+            "pk:MIN_BET:",
+            "pk:ANTE_TRIMMING_STATUS:",
+            "pk:BETTING_TYPE:",
+            "pk:num:",
+            "pk:amt:",
+            "pk:showdown:",
+            "pk:winner:",
+        )):
+            continue
+        if token in ("pk:private_card", "pk:undealt_card", "pk:card"):
+            continue
+        # Skip decomposed rank/suit sub-tokens (single char after "pk:")
+        if token.startswith("pk:") and len(token) == 4 and token[3:] in _POKER_RANK_SUIT_CHARS:
+            continue
+        if token.startswith("pk:seat:"):
+            if not re.fullmatch(r"pk:seat:p\d+", token):
                 raise ProductionDatasetError(f"Invalid poker seat token: {token}")
             pending_seat = True
             continue
@@ -121,23 +124,23 @@ def validate_poker_public_sequence(tokens):
         if token in POKER_NON_SEAT_ACTIONS:
             pending_seat = False
             continue
-        if token.startswith("act:"):
+        if token.startswith("pk:act:"):
             if token not in POKER_PLAYER_ACTIONS:
                 raise ProductionDatasetError(f"Unknown poker action token: {token}")
             if not pending_seat:
                 raise ProductionDatasetError(f"Poker player action is missing a preceding seat token: {token}")
-            if token in {"act:bet", "act:raise"} and not blinds_seen:
+            if token in {"pk:act:bet", "pk:act:raise"} and not blinds_seen:
                 raise ProductionDatasetError(f"Poker betting action appears before blind/ante posting: {token}")
             if token in {
-                "act:post_small_blind",
-                "act:post_big_blind",
-                "act:post_blind",
-                "act:post_ante",
-                "act:blind",
-                "act:ante",
+                "pk:act:post_small_blind",
+                "pk:act:post_big_blind",
+                "pk:act:post_blind",
+                "pk:act:post_ante",
+                "pk:act:blind",
+                "pk:act:ante",
             }:
                 blinds_seen = True
-            if token in POKER_AMOUNT_REQUIRED_ACTIONS and not _next_token_has_prefix(tokens, index, "AMT:"):
+            if token in POKER_AMOUNT_REQUIRED_ACTIONS and not _next_token_has_prefix(tokens, index, "pk:amt:"):
                 raise ProductionDatasetError(f"Poker action is missing amount tokens: {token}")
             pending_seat = False
             continue
@@ -265,27 +268,47 @@ def validate_entry(entry):
     if game == "chess":
         board = chess.Board()
         variant = None
-        for token in tokens[2:-1]:
-            if token.startswith("VARIANT:"):
-                variant = token.split(":", 1)[1]
+        i = 2  # skip <bos> <chess>
+        end = len(tokens) - 1  # stop before <eos>
+        while i < end:
+            token = tokens[i]
+            if token.startswith("ch:rule:variant:"):
+                variant = token.split(":", 3)[3]
                 if variant in {"chess960", "chess_960", "fischerandom", "fischer_random"}:
                     board = chess.Board(chess960=True)
                 elif variant not in {"chess", "standard"}:
                     raise ProductionDatasetError(f"Unsupported chess variant token: {token}")
+                i += 1
                 continue
-            if token.startswith("FEN:"):
-                fen = token.split(":", 1)[1].replace("_", " ")
+            if token.startswith("ch:fen:"):
+                fen = token.split(":", 2)[2].replace("_", " ")
                 try:
                     board = chess.Board(fen, chess960=variant in {"chess960", "chess_960", "fischerandom", "fischer_random"})
                 except ValueError as exc:
                     raise ProductionDatasetError(f"Invalid chess FEN token: {token}") from exc
+                i += 1
                 continue
-            if not re.fullmatch(r"[a-h][1-8][a-h][1-8][qrbn]?", token):
-                raise ProductionDatasetError(f"Invalid chess token: {token}")
-            move = chess.Move.from_uci(token)
-            if move not in board.legal_moves:
-                raise ProductionDatasetError(f"Illegal chess move token: {token}")
-            board.push(move)
+            # Move: ch:w:e2 ch:e4 [ch:=q]
+            if re.fullmatch(r"ch:[wb]:[a-h][1-8]", token):
+                src = token[-2:]
+                i += 1
+                if i >= end:
+                    raise ProductionDatasetError(f"Chess move source token has no destination: {token}")
+                dest_token = tokens[i]
+                if not re.fullmatch(r"ch:[a-h][1-8]", dest_token):
+                    raise ProductionDatasetError(f"Invalid chess destination token: {dest_token}")
+                dest = dest_token[3:]
+                uci = src + dest
+                i += 1
+                if i < end and re.fullmatch(r"ch:=[qrbn]", tokens[i]):
+                    uci += tokens[i][4:]
+                    i += 1
+                move = chess.Move.from_uci(uci)
+                if move not in board.legal_moves:
+                    raise ProductionDatasetError(f"Illegal chess move: {uci}")
+                board.push(move)
+                continue
+            raise ProductionDatasetError(f"Invalid chess token: {token}")
     if game == "shogi":
         try:
             validate_shogi_token_sequence(tokens)
@@ -298,99 +321,155 @@ def validate_entry(entry):
             raise ProductionDatasetError(f"Invalid Go sequence: {exc}") from exc
     if game == "othello":
         try:
-            validate_othello_moves(tokens[2:-1])
+            raw_moves = []
+            for token in tokens[2:-1]:
+                if not re.fullmatch(r"ot:[bw]:.+", token):
+                    raise ProductionDatasetError(f"Invalid othello token: {token}")
+                raw_moves.append(token.split(":", 2)[2])
+            validate_othello_moves(raw_moves)
         except ValueError as exc:
             raise ProductionDatasetError(f"Invalid Othello sequence: {exc}") from exc
     if game == "poker":
-        if not tokens[2].startswith("view_"):
+        if not tokens[2].startswith("view:"):
             raise ProductionDatasetError("Poker entry is missing a view token")
         if any(pattern.search(token) for token in tokens for pattern in PRIVATE_POKER_TOKEN_PATTERNS):
             raise ProductionDatasetError("Poker entry leaks raw private hole-card tokens")
         view_type = metadata.get("view_type")
-        if tokens[2] == "view_complete":
+        if tokens[2] == "view:complete":
             if view_type not in (None, "complete"):
                 raise ProductionDatasetError("Poker complete view metadata mismatch")
-            if any(token.startswith(("private_cards:", "private_card:", "deck:")) for token in tokens):
+            if any(token in ("pk:private_card", "pk:undealt_card") or token.startswith(("private_cards:", "deck:")) for token in tokens):
                 raise ProductionDatasetError("Poker complete view contains hidden-card tokens")
-        elif tokens[2].startswith("view_imperfect_p"):
-            viewer = tokens[2].removeprefix("view_imperfect_")
-            private_tokens = [token for token in tokens if token.startswith("private_card:")]
-            if not (1 <= len(private_tokens) <= 10) or any(not token.startswith(f"private_card:{viewer}:") for token in private_tokens):
+        elif tokens[2].startswith("view:imperfect:"):
+            viewer = "p" + tokens[2].split(":", 2)[2]
+            # pk:private_card markers: the next token should be pk:seat:pN for the viewer
+            private_marker_indices = [i for i, t in enumerate(tokens) if t == "pk:private_card"]
+            if not (1 <= len(private_marker_indices) <= 10):
                 raise ProductionDatasetError("Poker imperfect view must contain only the viewer's private card tokens")
-            if any(token.startswith(("deck:", "undealt_cards:", "undealt_card:")) for token in tokens):
+            for mi in private_marker_indices:
+                if mi + 1 >= len(tokens) or tokens[mi + 1] != f"pk:seat:{viewer}":
+                    raise ProductionDatasetError("Poker imperfect view must contain only the viewer's private card tokens")
+            if any(token in ("pk:undealt_card",) or token.startswith(("deck:", "undealt_cards:")) for token in tokens):
                 raise ProductionDatasetError("Poker imperfect view cannot contain deck tokens")
-        elif tokens[2] == "view_omniscient":
-            if not any(token.startswith("private_card:") for token in tokens):
+        elif tokens[2] == "view:omniscient":
+            if not any(token == "pk:private_card" for token in tokens):
                 raise ProductionDatasetError("Poker omniscient view is missing private-card tokens")
-            if not any(token.startswith("undealt_card:") for token in tokens):
+            if not any(token == "pk:undealt_card" for token in tokens):
                 raise ProductionDatasetError("Poker omniscient view is missing undealt-card tokens")
         else:
             raise ProductionDatasetError(f"Unknown poker view token: {tokens[2]}")
         validate_poker_public_sequence(tokens)
     if game == "bridge":
-        if not tokens[2].startswith("view_"):
+        if not tokens[2].startswith("view:"):
             raise ProductionDatasetError("Bridge entry is missing view token")
-        hand_tokens = [token for token in tokens if token.startswith("hand:")]
-        if tokens[2] == "view_complete" and hand_tokens:
-            raise ProductionDatasetError("Bridge complete view must not contain hidden hands")
-        if tokens[2].startswith("view_imperfect_") and len(hand_tokens) != 13:
-            raise ProductionDatasetError("Bridge imperfect view must contain exactly one 13-card hand")
-        if tokens[2] == "view_omniscient" and len(hand_tokens) != 52:
-            raise ProductionDatasetError("Bridge omniscient view must contain 52 hand-card tokens")
-        if tokens[2] not in {"view_complete", "view_omniscient"} and not tokens[2].startswith("view_imperfect_"):
-            raise ProductionDatasetError(f"Unknown bridge view token: {tokens[2]}")
+        # Parse hand cards from multi-token sequences: br:hand:SEAT br:RANK br:SUIT
+        hand_marker_indices = [i for i, t in enumerate(tokens) if t.startswith("br:hand:")]
         cards = []
         hands = {}
-        for token in hand_tokens:
-            _, seat, card = token.split(":", 2)
+        for mi in hand_marker_indices:
+            seat = tokens[mi].split(":", 2)[2]
             if seat not in {"N", "E", "S", "W"}:
-                raise ProductionDatasetError(f"Invalid bridge hand seat: {token}")
+                raise ProductionDatasetError(f"Invalid bridge hand seat: {tokens[mi]}")
+            if mi + 2 >= len(tokens):
+                raise ProductionDatasetError(f"Bridge hand token missing rank/suit after {tokens[mi]}")
+            rank_token = tokens[mi + 1]
+            suit_token = tokens[mi + 2]
+            if not (rank_token.startswith("br:") and len(rank_token) == 4 and rank_token[3:] in "AKQJT98765432"):
+                raise ProductionDatasetError(f"Invalid bridge hand rank token: {rank_token}")
+            if not (suit_token.startswith("br:") and len(suit_token) == 4 and suit_token[3:] in "shdc"):
+                raise ProductionDatasetError(f"Invalid bridge hand suit token: {suit_token}")
+            card = rank_token[3:] + suit_token[3:]
             hands.setdefault(seat, []).append(card)
             cards.append(card)
-        if tokens[2] == "view_omniscient" and (len(cards) != 52 or len(set(cards)) != 52):
+        hand_count = len(cards)
+        if tokens[2] == "view:complete" and hand_count:
+            raise ProductionDatasetError("Bridge complete view must not contain hidden hands")
+        if tokens[2].startswith("view:imperfect:") and hand_count != 13:
+            raise ProductionDatasetError("Bridge imperfect view must contain exactly one 13-card hand")
+        if tokens[2] == "view:omniscient" and hand_count != 52:
+            raise ProductionDatasetError("Bridge omniscient view must contain 52 hand-card tokens")
+        if tokens[2] not in {"view:complete", "view:omniscient"} and not tokens[2].startswith("view:imperfect:"):
+            raise ProductionDatasetError(f"Unknown bridge view token: {tokens[2]}")
+        if tokens[2] == "view:omniscient" and (len(cards) != 52 or len(set(cards)) != 52):
             raise ProductionDatasetError("Bridge entry must contain 52 unique dealt cards")
         if any(len(hand_cards) != 13 for hand_cards in hands.values()):
             raise ProductionDatasetError("Bridge hand-card tokens must group into 13 cards per seat")
         for card in cards:
             if not re.fullmatch(r"[AKQJT98765432][shdc]", card):
                 raise ProductionDatasetError(f"Invalid bridge card: {card}")
+        # Parse body tokens using index-based iteration for multi-token sequences
         dealer = None
         play_leader = None
         trump_suit = None
         calls = []
         played_cards = []
         played_seats = []
-        for token in tokens[3:-1]:
-            if token.startswith("dealer:"):
-                dealer = token.split(":", 1)[1]
+        _BR_RANK_CHARS = set("AKQJT98765432")
+        _BR_SUIT_CHARS = set("shdc")
+        i = 3  # skip <bos> <bridge> view:*
+        end = len(tokens) - 1  # stop before <eos>
+        while i < end:
+            token = tokens[i]
+            if token.startswith("br:dealer:"):
+                dealer = token.split(":", 2)[2]
+                i += 1
                 continue
-            if token.startswith("play_leader:"):
-                play_leader = token.split(":", 1)[1]
+            if token.startswith("br:play_leader:"):
+                play_leader = token.split(":", 2)[2]
+                i += 1
                 continue
-            if token.startswith("trump:"):
-                trump_suit = token.split(":", 1)[1]
+            if token.startswith("br:trump:"):
+                trump_suit = token.split(":", 2)[2]
                 if trump_suit not in {"c", "d", "h", "s"}:
                     raise ProductionDatasetError(f"Invalid bridge trump token: {token}")
+                i += 1
                 continue
-            if token.startswith(("vul:", "contract:", "declarer:", "hand:")):
+            if token.startswith(("br:vul:", "br:contract:", "br:declarer:")):
+                i += 1
                 continue
-            if token.startswith("bid:"):
-                call = token.split(":", 1)[1]
+            if token.startswith("br:hand:"):
+                # Hand marker: skip marker + rank + suit (3 tokens)
+                i += 3
+                continue
+            # Rank/suit sub-tokens from hand sequences already consumed by +3 skip above,
+            # but if we encounter a stray br: rank/suit token, skip it
+            if token.startswith("br:") and len(token) == 4 and token[3:] in (_BR_RANK_CHARS | _BR_SUIT_CHARS):
+                i += 1
+                continue
+            if token.startswith("br:bid:"):
+                # Bid: br:bid:SEAT br:bid:CALL (2 tokens)
+                bid_seat = token.split(":", 2)[2]
+                if bid_seat not in {"N", "E", "S", "W"}:
+                    raise ProductionDatasetError(f"Invalid bridge bid seat: {token}")
+                i += 1
+                if i >= end:
+                    raise ProductionDatasetError(f"Bridge bid seat token missing call: {token}")
+                call_token = tokens[i]
+                if not call_token.startswith("br:bid:"):
+                    raise ProductionDatasetError(f"Expected bridge bid call after seat, got: {call_token}")
+                call = call_token.split(":", 2)[2]
                 if not re.fullmatch(r"(?:PASS|X|XX|[1-7][CDHSN])", call):
-                    raise ProductionDatasetError(f"Invalid bridge bid token: {token}")
+                    raise ProductionDatasetError(f"Invalid bridge bid token: {call_token}")
                 calls.append(call)
+                i += 1
                 continue
-            if token.startswith("play:"):
-                parts = token.split(":")
-                if len(parts) != 3:
-                    raise ProductionDatasetError(f"Invalid bridge play token: {token}")
-                _, seat, card = parts
+            if token.startswith("br:play:"):
+                # Play: br:play:SEAT br:RANK br:SUIT (3 tokens)
+                seat = token.split(":", 2)[2]
                 if seat not in {"N", "E", "S", "W"}:
                     raise ProductionDatasetError(f"Invalid bridge play seat: {token}")
-                if not re.fullmatch(r"[AKQJT98765432][shdc]", card):
-                    raise ProductionDatasetError(f"Invalid bridge play token: {token}")
+                if i + 2 >= end:
+                    raise ProductionDatasetError(f"Bridge play token missing rank/suit: {token}")
+                rank_token = tokens[i + 1]
+                suit_token = tokens[i + 2]
+                if not (rank_token.startswith("br:") and len(rank_token) == 4 and rank_token[3:] in _BR_RANK_CHARS):
+                    raise ProductionDatasetError(f"Invalid bridge play rank token: {rank_token}")
+                if not (suit_token.startswith("br:") and len(suit_token) == 4 and suit_token[3:] in _BR_SUIT_CHARS):
+                    raise ProductionDatasetError(f"Invalid bridge play suit token: {suit_token}")
+                card = rank_token[3:] + suit_token[3:]
                 played_seats.append(seat)
                 played_cards.append(card)
+                i += 3
                 continue
             raise ProductionDatasetError(f"Invalid bridge token: {token}")
         try:
@@ -399,14 +478,13 @@ def validate_entry(entry):
                 expected_seats = bridge_expected_play_seats(played_cards, play_leader, trump_suit)
                 if played_seats != expected_seats:
                     raise ProductionDatasetError("Bridge play seat annotations do not match trick order")
-            if tokens[2] == "view_omniscient" and played_cards:
+            if tokens[2] == "view:omniscient" and played_cards:
                 validate_bridge_play(played_cards, hands, play_leader, trump_suit)
-            elif tokens[2].startswith("view_imperfect_") and played_cards and hand_tokens:
+            elif tokens[2].startswith("view:imperfect:") and played_cards and hand_count:
                 visible_hands = {}
-                for token in hand_tokens:
-                    _, seat, card = token.split(":")
-                    visible_hands.setdefault(seat, set()).add(card)
-                visible_remaining = {seat: set(cards) for seat, cards in visible_hands.items()}
+                for seat, hand_cards in hands.items():
+                    visible_hands[seat] = set(hand_cards)
+                visible_remaining = {seat: set(hcards) for seat, hcards in visible_hands.items()}
                 for seat, card in zip(played_seats, played_cards):
                     if seat in visible_remaining:
                         if card not in visible_remaining[seat]:

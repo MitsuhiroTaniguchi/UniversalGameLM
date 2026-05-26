@@ -16,7 +16,7 @@ class UniversalGameTokenizer:
         if special_tokens is None:
             special_tokens = [
                 "<pad>", "<unk>", "<bos>", "<eos>",
-                "<chess>", "<shogi>", "<go>", "<othello>", "<poker>", "<bridge>",
+                "<mahjong>", "<chess>", "<shogi>", "<go>", "<othello>", "<poker>", "<bridge>",
             ]
             
         self.special_tokens = special_tokens

@@ -7,6 +7,7 @@ from pathlib import Path
 
 BOARD_SIZE = 8
 PASS_TOKEN = "pass"
+_PASS_TOKENS = {"ot:b:pass", "ot:w:pass"}
 DIRECTIONS = (
     (-1, -1), (-1, 0), (-1, 1),
     (0, -1),           (0, 1),
@@ -129,11 +130,16 @@ def tokens_from_othello_moves(moves, require_terminal=True):
     canonical = validate_othello_moves([str(m).lower() for m in moves], require_terminal=require_terminal)
     if len(canonical) < 8:
         raise ValueError("Othello game is too short")
-    return ["<bos>", "<othello>"] + canonical + ["<eos>"]
+    color = "b"
+    prefixed = []
+    for move in canonical:
+        prefixed.append(f"ot:{color}:{move}")
+        color = "w" if color == "b" else "b"
+    return ["<bos>", "<othello>"] + prefixed + ["<eos>"]
 
 
 def othello_move_count(tokens):
-    return sum(1 for token in tokens[2:-1] if token != PASS_TOKEN)
+    return sum(1 for token in tokens[2:-1] if token not in _PASS_TOKENS)
 
 
 def parse_othello_pgn_to_tokens(pgn_path, max_games=None):

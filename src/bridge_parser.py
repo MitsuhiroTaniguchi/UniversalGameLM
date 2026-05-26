@@ -10,6 +10,11 @@ ALL_CARDS = {f"{r}{s.lower()}" for s in SUITS for r in RANKS}
 CALL_RE = re.compile(r"^(?:PASS|P|X|XX|DBL|RDBL|[1-7](?:C|D|H|S|N|NT))$", re.IGNORECASE)
 CARD_RE = re.compile(r"^(?:[SHDC][AKQJT98765432]|[AKQJT98765432][shdc])$", re.IGNORECASE)
 STRAIN_ORDER = {"C": 0, "D": 1, "H": 2, "S": 3, "N": 4}
+SEAT_TO_PLAYER = {"N": 1, "E": 2, "S": 3, "W": 4}
+
+
+def _br_card_tokens(prefix, seat, card):
+    return [f"br:{prefix}:{seat}", f"br:{card[0]}", f"br:{card[1]}"]
 
 
 def _canonical_call(raw):
@@ -274,22 +279,26 @@ def _bridge_block_to_tokens(block, source_path):
 
     context_tokens = []
     if dealer:
-        context_tokens.append(f"dealer:{dealer}")
+        context_tokens.append(f"br:dealer:{dealer}")
     vulnerable = tags.get("Vulnerable")
     if vulnerable:
-        context_tokens.append(f"vul:{vulnerable.upper().replace(' ', '_')}")
+        context_tokens.append(f"br:vul:{vulnerable.upper().replace(' ', '_')}")
     contract = tags.get("Contract")
     if contract:
-        context_tokens.append(f"contract:{contract.upper().replace(' ', '_')}")
+        context_tokens.append(f"br:contract:{contract.upper().replace(' ', '_')}")
     if trump_suit:
-        context_tokens.append(f"trump:{trump_suit}")
+        context_tokens.append(f"br:trump:{trump_suit}")
     declarer = tags.get("Declarer")
     if declarer:
-        context_tokens.append(f"declarer:{declarer.upper()}")
+        context_tokens.append(f"br:declarer:{declarer.upper()}")
     if play_starter:
-        context_tokens.append(f"play_leader:{play_starter}")
-    context_tokens.extend(f"bid:{call}" for call in calls)
-    context_tokens.extend(f"play:{seat}:{card}" for seat, card in played_by_seat)
+        context_tokens.append(f"br:play_leader:{play_starter}")
+    bid_start_idx = SEATS.index(auction_starter) if auction_starter in SEATS else 0
+    for i, call in enumerate(calls):
+        bid_seat = SEATS[(bid_start_idx + i) % 4]
+        context_tokens.extend([f"br:bid:{bid_seat}", f"br:bid:{call}"])
+    for seat, card in played_by_seat:
+        context_tokens.extend(_br_card_tokens("play", seat, card))
 
     base_metadata = {
         "event": tags.get("Event", "Unknown"),
@@ -310,19 +319,26 @@ def _bridge_block_to_tokens(block, source_path):
         "bridge_play_validated": True,
     }
     entries = [
-        (["<bos>", "<bridge>", "view_complete"] + context_tokens + ["<eos>"], base_metadata)
+        (["<bos>", "<bridge>", "view:complete"] + context_tokens + ["<eos>"], base_metadata)
     ]
     for seat in SEATS:
+        hand_tokens = []
+        for card in hands[seat]:
+            hand_tokens.extend(_br_card_tokens("hand", seat, card))
+        player_num = SEAT_TO_PLAYER[seat]
         entries.append((
-            ["<bos>", "<bridge>", f"view_imperfect_{seat}"]
-            + [f"hand:{seat}:{card}" for card in hands[seat]]
+            ["<bos>", "<bridge>", f"view:imperfect:{player_num}"]
+            + hand_tokens
             + context_tokens
             + ["<eos>"],
             {**base_metadata, "view_type": "imperfect", "viewer_seat": seat},
         ))
-    omni_hands = [f"hand:{seat}:{card}" for seat in SEATS for card in hands[seat]]
+    omni_hand_tokens = []
+    for seat in SEATS:
+        for card in hands[seat]:
+            omni_hand_tokens.extend(_br_card_tokens("hand", seat, card))
     entries.append((
-        ["<bos>", "<bridge>", "view_omniscient"] + omni_hands + context_tokens + ["<eos>"],
+        ["<bos>", "<bridge>", "view:omniscient"] + omni_hand_tokens + context_tokens + ["<eos>"],
         {**base_metadata, "view_type": "omniscient", "viewer_seat": None},
     ))
     return entries

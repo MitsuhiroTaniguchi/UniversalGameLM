@@ -2,16 +2,8 @@ import hashlib
 import re
 
 
-GAME_RULE_TOKENS = {
-    "chess": "rule_chess",
-    "shogi": "rule_shogi",
-    "go": "rule_go",
-    "othello": "rule_othello",
-    "poker": "rule_poker",
-    "bridge": "rule_bridge",
-}
-
 DEFAULT_SEAT_COUNTS = {
+    "mahjong": 4,
     "chess": 2,
     "shogi": 2,
     "go": 2,
@@ -48,7 +40,12 @@ def _year_from_metadata(metadata):
 
 
 def tokens_to_mahjonglm_stream(entry):
-    """Converts internal BOS/game/EOS tokens to MahjongLM-style body tokens."""
+    """Converts internal BOS/game/EOS tokens to MahjongLM-style body tokens.
+
+    Strips BOS, game marker, and EOS.  Ensures the body starts with a
+    ``view:`` token — if one is not already present, ``view:complete``
+    is prepended.
+    """
     game = entry["game"]
     tokens = list(entry["tokens"])
     if len(tokens) < 4 or tokens[0] != "<bos>" or tokens[-1] != "<eos>":
@@ -58,10 +55,9 @@ def tokens_to_mahjonglm_stream(entry):
         raise ValueError(f"Expected {marker}, got {tokens[1]}")
 
     body = tokens[2:-1]
-    rule_token = GAME_RULE_TOKENS[game]
-    if body and body[0].startswith("view_"):
-        return [rule_token] + body
-    return [rule_token, "view_complete"] + body
+    if body and body[0].startswith("view:"):
+        return body
+    return ["view:complete"] + body
 
 
 def normalize_mahjonglm_metadata(entry):

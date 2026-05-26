@@ -59,11 +59,11 @@ def _game_context_tokens(game):
     setup = game.headers.get("SetUp")
     fen = game.headers.get("FEN")
     if variant and variant != "?":
-        tokens.append(f"VARIANT:{variant.lower().replace(' ', '_')}")
+        tokens.append(f"ch:rule:variant:{variant.lower().replace(' ', '_')}")
     if setup == "1" or fen:
         if not fen:
             fen = chess.STARTING_FEN
-        tokens.append(f"FEN:{fen.replace(' ', '_')}")
+        tokens.append(f"ch:fen:{fen.replace(' ', '_')}")
     return tokens
 
 def parse_pgn_to_tokens(pgn_path, max_games=None):
@@ -100,7 +100,15 @@ def parse_pgn_to_tokens(pgn_path, max_games=None):
                 if move not in board.legal_moves:
                     legal = False
                     break
-                tokens.append(move.uci())
+                color = "w" if board.turn == chess.WHITE else "b"
+                uci = move.uci()
+                src = uci[:2]
+                dst = uci[2:4]
+                promo = uci[4:] if len(uci) > 4 else None
+                tokens.append(f"ch:{color}:{src}")
+                tokens.append(f"ch:{dst}")
+                if promo:
+                    tokens.append(f"ch:={promo}")
                 board.push(move)
                 move_count += 1
             if not legal:

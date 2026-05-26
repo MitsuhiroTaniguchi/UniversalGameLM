@@ -1,22 +1,47 @@
 import collections
 
 NON_MOVE_TOKENS = {
-    "act:preflop", "act:flop", "act:turn", "act:river",
-    "act:deal_board", "act:hidden",
+    "pk:act:preflop", "pk:act:flop", "pk:act:turn", "pk:act:river",
+    "pk:act:deal_board", "pk:act:hidden",
+    "view:complete", "view:omniscient",
+    "game_start", "game_end", "round_start", "round_end",
 }
 
 NON_MOVE_PREFIXES = (
-    "VARIANT:", "FEN:",
-    "SETUP:", "TURN:", "END:",
-    "SZ:", "KM:", "RU:", "HA:", "AB:", "AW:", "AE:",
-    "view_", "rule_",
-    "dealer:", "vul:", "contract:", "declarer:", "play_leader:", "trump:",
-    "hand:", "private_card:", "undealt_card:",
-    "seat:", "card:", "showdown:", "winner:",
-    "STARTING_STACKS:", "BLINDS_OR_STRADDLES:", "ANTES:", "MIN_BET:",
-    "ANTE_TRIMMING_STATUS:", "BETTING_TYPE:",
-    "NUM:", "AMT:",
+    "view:imperfect:",
+    "ch:rule:", "ch:fen:",
+    "sh:turn:", "sh:end:",
+    "go:sz:", "go:km:", "go:ru:", "go:ha:",
+    "go:setup_b", "go:setup_w", "go:setup_e",
+    "mj:rule:", "mj:bakaze:", "mj:kyoku:", "mj:honba", "mj:riichi_sticks",
+    "mj:tenbo:", "mj:dora", "mj:ura_dora", "mj:wall",
+    "mj:haipai:", "mj:hidden_haipai:",
+    "br:dealer:", "br:vul:", "br:contract:", "br:declarer:", "br:play_leader:", "br:trump:",
+    "br:hand:",
+    "pk:private_card", "pk:undealt_card",
+    "pk:seat:", "pk:card", "pk:showdown:", "pk:winner:",
+    "pk:VARIANT:", "pk:STARTING_STACKS:", "pk:BLINDS_OR_STRADDLES:", "pk:ANTES:", "pk:MIN_BET:",
+    "pk:ANTE_TRIMMING_STATUS:", "pk:BETTING_TYPE:",
+    "pk:num:", "pk:amt:",
 )
+
+
+_BRIDGE_BID_SEATS = frozenset({"br:bid:N", "br:bid:E", "br:bid:S", "br:bid:W"})
+
+
+def _is_move_subtok(token):
+    """Decomposed sub-token that completes a multi-token game action."""
+    if len(token) == 4 and token[:3] in ("br:", "pk:"):
+        return True
+    if token in _BRIDGE_BID_SEATS:
+        return True
+    if token.startswith("ch:") and not token.startswith(("ch:w:", "ch:b:")):
+        return True
+    if token.startswith("sh:") and not token.startswith(("sh:b:", "sh:w:")):
+        return True
+    if token.startswith("go:") and token not in ("go:b", "go:w"):
+        return True
+    return False
 
 
 def is_counted_move_token(token):
@@ -24,7 +49,9 @@ def is_counted_move_token(token):
         return False
     if token in NON_MOVE_TOKENS:
         return False
-    return not token.startswith(NON_MOVE_PREFIXES)
+    if token.startswith(NON_MOVE_PREFIXES):
+        return False
+    return not _is_move_subtok(token)
 
 
 class DatasetStatsAccumulator:
