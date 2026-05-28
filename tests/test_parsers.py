@@ -72,8 +72,14 @@ class TestUniversalGameParsers(unittest.TestCase):
             tokens, meta = games[0]
             self.assertEqual(tokens[0], "<bos>")
             self.assertEqual(tokens[1], "<chess>")
-            self.assertEqual(tokens[2], "ch:w:e2")
-            self.assertEqual(tokens[3], "ch:e4")
+            self.assertEqual(tokens[2], "ch:fen:r8:r")
+            self.assertEqual(tokens[3], "ch:fen:r8:n")
+            self.assertEqual(tokens[18], "ch:fen:r6:8")
+            self.assertEqual(tokens[38], "ch:fen:turn:w")
+            self.assertEqual(tokens[39], "ch:fen:castle:KQkq")
+            self.assertEqual(tokens[40], "ch:fen:ep:-")
+            self.assertEqual(tokens[41], "ch:w:e2")
+            self.assertEqual(tokens[42], "ch:e4")
             self.assertEqual(tokens[-1], "<eos>")
             self.assertEqual(meta["white"], "Player1")
             self.assertEqual(meta["game_index"], 1)
@@ -501,7 +507,7 @@ HA H9 H5 H2
             self.assertEqual(tokens[1], "<bridge>")
             self.assertEqual(tokens[2], "view:complete")
             self.assertIn("br:dealer:N", tokens)
-            self.assertIn("br:bid:1N", tokens)
+            self.assertIn("br:bid:1NT", tokens)
             self.assertIn("br:play:S", tokens)
             self.assertEqual(meta["seat_count"], 4)
             self.assertFalse(any(token.startswith("br:hand:") for token in tokens))
@@ -787,12 +793,12 @@ HA H2 H7 H3
                     validate_entry({"game": "poker", "tokens": ["<bos>", "<poker>", token, "<eos>"]})
 
     def test_validate_entry_bounds_poker_imperfect_private_cards(self):
-        one_card = ["<bos>", "<poker>", "view:imperfect:1", "pk:private_card", "pk:seat:p1", "pk:card:Ah", "pk:seat:p1", "pk:act:fold", "<eos>"]
+        one_card = ["<bos>", "<poker>", "view:imperfect:p1", "pk:private_card", "pk:seat:p1", "pk:card:Ah", "pk:seat:p1", "pk:act:fold", "<eos>"]
         validate_entry({"game": "poker", "tokens": one_card, "metadata": {"seat_count": 2, "view_type": "imperfect"}})
         too_many_cards = []
         for rank in "A23456789TJ":
             too_many_cards.extend(["pk:private_card", "pk:seat:p1", f"pk:card:{rank}h"])
-        too_many = ["<bos>", "<poker>", "view:imperfect:1"] + too_many_cards + ["pk:seat:p1", "pk:act:fold", "<eos>"]
+        too_many = ["<bos>", "<poker>", "view:imperfect:p1"] + too_many_cards + ["pk:seat:p1", "pk:act:fold", "<eos>"]
         with self.assertRaises(ProductionDatasetError):
             validate_entry({"game": "poker", "tokens": too_many, "metadata": {"seat_count": 2, "view_type": "imperfect"}})
 
@@ -1073,8 +1079,12 @@ actions = [
         self.assertFalse(is_counted_move_token("pk:act:deal_board"))
         self.assertFalse(is_counted_move_token("pk:act:hidden"))
         self.assertFalse(is_counted_move_token("view:complete"))
-        self.assertFalse(is_counted_move_token("view:imperfect:1"))
+        self.assertFalse(is_counted_move_token("view:imperfect:p1"))
         self.assertFalse(is_counted_move_token("ch:rule:variant:standard"))
+        self.assertFalse(is_counted_move_token("ch:fen:r8:r"))
+        self.assertFalse(is_counted_move_token("ch:fen:turn:w"))
+        self.assertFalse(is_counted_move_token("ch:fen:castle:KQkq"))
+        self.assertFalse(is_counted_move_token("ch:fen:ep:-"))
         # Decomposed sub-tokens must not inflate move counts
         self.assertFalse(is_counted_move_token("ch:e4"))
         self.assertFalse(is_counted_move_token("ch:b5"))
@@ -1094,7 +1104,7 @@ actions = [
         self.assertTrue(is_counted_move_token("go:b:pd"))
         self.assertTrue(is_counted_move_token("go:w:dd"))
         self.assertTrue(is_counted_move_token("br:play:S"))
-        self.assertTrue(is_counted_move_token("br:bid:1N"))
+        self.assertTrue(is_counted_move_token("br:bid:1NT"))
         self.assertTrue(is_counted_move_token("br:bid:PASS"))
         self.assertTrue(is_counted_move_token("ot:b:d3"))
         self.assertTrue(is_counted_move_token("pk:act:raise"))
@@ -1306,7 +1316,7 @@ actions = [
             cache_path = os.path.join(temp_dir, "cache.jsonl")
             rows = [
                 {"game": "poker", "tokens": ["<bos>", "<poker>", "view:complete", "pk:seat:p1", "pk:act:fold", "<eos>"], "metadata": {"seat_count": 2, "view_type": "complete"}},
-                {"game": "poker", "tokens": ["<bos>", "<poker>", "view:imperfect:1", "pk:private_card", "pk:seat:p1", "pk:card:Ah", "pk:seat:p1", "pk:act:fold", "<eos>"], "metadata": {"seat_count": 2, "view_type": "imperfect", "viewer_seat": 1}},
+                {"game": "poker", "tokens": ["<bos>", "<poker>", "view:imperfect:p1", "pk:private_card", "pk:seat:p1", "pk:card:Ah", "pk:seat:p1", "pk:act:fold", "<eos>"], "metadata": {"seat_count": 2, "view_type": "imperfect", "viewer_seat": 1}},
                 {"game": "poker", "tokens": ["<bos>", "<poker>", "view:complete", "pk:seat:p2", "pk:act:fold", "<eos>"], "metadata": {"seat_count": 2, "view_type": "complete"}},
             ]
             with open(cache_path, "w", encoding="utf-8") as f:
@@ -1326,8 +1336,14 @@ actions = [
         with tempfile.TemporaryDirectory() as temp_dir:
             tokenizer_dir = os.path.join(temp_dir, "mahjong_tokenizer")
             os.makedirs(tokenizer_dir)
+            fen_rank_tokens = []
+            for rank in range(8, 0, -1):
+                for c in ['K','Q','R','B','N','P','k','q','r','b','n','p','1','2','3','4','5','6','7','8']:
+                    fen_rank_tokens.append(f"ch:fen:r{rank}:{c}")
             vocab_tokens = [
                 "<pad>", "<unk>", "<bos>", "<eos>", "view:complete",
+                *fen_rank_tokens,
+                "ch:fen:turn:w", "ch:fen:castle:KQkq", "ch:fen:ep:-",
                 "ch:w:e2", "ch:e4", "ch:b:e7", "ch:e5", "ch:w:g1", "ch:f3",
                 "ch:b:b8", "ch:c6", "ch:w:f1", "ch:b5", "ch:b:a7", "ch:a6", "ch:w:b5", "ch:a4",
             ]

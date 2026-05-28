@@ -78,7 +78,7 @@ def rename_token(old_name: str) -> str:
         return "view:omniscient"
     m = re.fullmatch(r"view_imperfect_(\d)", old_name)
     if m:
-        return f"view:imperfect:{int(m.group(1)) + 1}"
+        return f"view:imperfect:p{int(m.group(1)) + 1}"
 
     # --- Rule tokens ---
     m = re.fullmatch(r"rule_player_(\d)", old_name)
@@ -200,9 +200,10 @@ def rename_token(old_name: str) -> str:
         return f"mj:opened_hand:{SEAT_TO_WIND[int(m.group(1))]}"
 
     # --- Score tokens ---
+    # final_score uses 1-indexed player number (p1 = oya, p2 = shimocha, ...)
     m = re.fullmatch(r"final_score_(\d)", old_name)
     if m:
-        return f"mj:final_score:{SEAT_TO_WIND[int(m.group(1))]}"
+        return f"mj:final_score:p{int(m.group(1)) + 1}"
     m = re.fullmatch(r"score_delta_(\d)", old_name)
     if m:
         return f"mj:score_delta:{SEAT_TO_WIND[int(m.group(1))]}"
@@ -211,11 +212,12 @@ def rename_token(old_name: str) -> str:
         return f"mj:score:{SEAT_TO_WIND[int(m.group(1))]}"
 
     # --- Rank tokens ---
+    # final_rank uses 1-indexed player number
     m = re.fullmatch(r"final_rank_(\d)_(\d)", old_name)
     if m:
         seat = int(m.group(1))
         rank = m.group(2)
-        return f"mj:final_rank:{SEAT_TO_WIND[seat]}:{rank}"
+        return f"mj:final_rank:p{seat + 1}:{rank}"
     m = re.fullmatch(r"rank_(\d)_(\d)", old_name)
     if m:
         seat = int(m.group(1))

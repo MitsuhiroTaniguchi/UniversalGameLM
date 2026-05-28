@@ -163,7 +163,7 @@ def parse_sgf_to_tokens(sgf_path):
         for prefix, prop in (("km", "KM"), ("ru", "RU"), ("ha", "HA")):
             value = get_sgf_property(root, prop, None)
             if value not in (None, "Unknown", ""):
-                context_tokens.append(f"go:{prefix}:{str(value).replace(' ', '_')}")
+                context_tokens.append(f"go:{prefix}:{str(value).lower().replace(' ', '_')}")
         tokens = ["<bos>", "<go>"] + context_tokens + setup_tokens + moves + ["<eos>"]
         validate_go_token_sequence(tokens)
 

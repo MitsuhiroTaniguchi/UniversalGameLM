@@ -16,8 +16,6 @@ POKER_MOVE_ACTIONS = {
     "pk:act:post_big_blind",
     "pk:act:post_blind",
     "pk:act:post_ante",
-    "pk:act:blind",
-    "pk:act:ante",
     "pk:act:bet",
     "pk:act:call",
     "pk:act:check",
@@ -371,7 +369,7 @@ class PokerHandSimulator:
         public_body = complete_tokens[3:-1]
         for seat in range(1, self.num_seats + 1):
             yield (
-                ["<bos>", "<poker>", f"view:imperfect:{seat}"]
+                ["<bos>", "<poker>", f"view:imperfect:p{seat}"]
                 + _private_card_tokens(seat, hands[seat])
                 + public_body
                 + ["<eos>"],
@@ -837,7 +835,7 @@ def poker_view_entries(actions, state_tokens):
     for seat in sorted(observed_holes):
         entries.append(
             (
-                ["<bos>", "<poker>", f"view:imperfect:{seat}"]
+                ["<bos>", "<poker>", f"view:imperfect:p{seat}"]
                 + _private_card_tokens(seat, observed_holes[seat])
                 + state_tokens
                 + public_actions

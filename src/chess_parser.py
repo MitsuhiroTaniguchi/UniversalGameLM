@@ -53,6 +53,19 @@ def iter_chess_inputs(input_path):
         yield str(path)
 
 
+def _fen_tokens(fen):
+    parts = fen.split()
+    ranks = parts[0].split("/")
+    tokens = []
+    for i, rank in enumerate(ranks):
+        for char in rank:
+            tokens.append(f"ch:fen:r{8 - i}:{char}")
+    tokens.append(f"ch:fen:turn:{parts[1]}")
+    tokens.append(f"ch:fen:castle:{parts[2]}")
+    tokens.append(f"ch:fen:ep:{parts[3]}")
+    return tokens
+
+
 def _game_context_tokens(game):
     tokens = []
     variant = game.headers.get("Variant")
@@ -60,10 +73,9 @@ def _game_context_tokens(game):
     fen = game.headers.get("FEN")
     if variant and variant != "?":
         tokens.append(f"ch:rule:variant:{variant.lower().replace(' ', '_')}")
-    if setup == "1" or fen:
-        if not fen:
-            fen = chess.STARTING_FEN
-        tokens.append(f"ch:fen:{fen.replace(' ', '_')}")
+    if not fen:
+        fen = chess.STARTING_FEN
+    tokens.extend(_fen_tokens(fen))
     return tokens
 
 def parse_pgn_to_tokens(pgn_path, max_games=None):

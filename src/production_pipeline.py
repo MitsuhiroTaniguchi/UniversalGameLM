@@ -51,8 +51,6 @@ POKER_PLAYER_ACTIONS = {
     "pk:act:post_big_blind",
     "pk:act:post_blind",
     "pk:act:post_ante",
-    "pk:act:blind",
-    "pk:act:ante",
     "pk:act:bet",
     "pk:act:call",
     "pk:act:check",
@@ -66,8 +64,6 @@ POKER_AMOUNT_REQUIRED_ACTIONS = {
     "pk:act:post_big_blind",
     "pk:act:post_blind",
     "pk:act:post_ante",
-    "pk:act:blind",
-    "pk:act:ante",
     "pk:act:bet",
     "pk:act:raise",
 }
@@ -136,8 +132,6 @@ def validate_poker_public_sequence(tokens):
                 "pk:act:post_big_blind",
                 "pk:act:post_blind",
                 "pk:act:post_ante",
-                "pk:act:blind",
-                "pk:act:ante",
             }:
                 blinds_seen = True
             if token in POKER_AMOUNT_REQUIRED_ACTIONS and not _next_token_has_prefix(tokens, index, "pk:amt:"):
@@ -280,13 +274,29 @@ def validate_entry(entry):
                     raise ProductionDatasetError(f"Unsupported chess variant token: {token}")
                 i += 1
                 continue
-            if token.startswith("ch:fen:"):
-                fen = token.split(":", 2)[2].replace("_", " ")
+            if token.startswith("ch:fen:r"):
+                fen_ranks = {}
+                fen_fields = {}
+                while i < end and tokens[i].startswith("ch:fen:"):
+                    part = tokens[i]
+                    key, _, val = part[7:].partition(":")
+                    if key.startswith("r") and key[1:].isdigit():
+                        rn = int(key[1:])
+                        fen_ranks[rn] = fen_ranks.get(rn, "") + val
+                    else:
+                        fen_fields[key] = val
+                    i += 1
+                if len(fen_ranks) != 8 or set(fen_ranks) != set(range(1, 9)):
+                    raise ProductionDatasetError(f"Chess FEN missing ranks: got {sorted(fen_ranks)}")
+                for field in ("turn", "castle", "ep"):
+                    if field not in fen_fields:
+                        raise ProductionDatasetError(f"Chess FEN missing field: {field}")
+                placement = "/".join(fen_ranks[r] for r in range(8, 0, -1))
+                fen = f"{placement} {fen_fields['turn']} {fen_fields['castle']} {fen_fields['ep']} 0 1"
                 try:
                     board = chess.Board(fen, chess960=variant in {"chess960", "chess_960", "fischerandom", "fischer_random"})
                 except ValueError as exc:
-                    raise ProductionDatasetError(f"Invalid chess FEN token: {token}") from exc
-                i += 1
+                    raise ProductionDatasetError(f"Invalid chess FEN: {fen}") from exc
                 continue
             # Move: ch:w:e2 ch:e4 [ch:=q]
             if re.fullmatch(r"ch:[wb]:[a-h][1-8]", token):
@@ -341,7 +351,7 @@ def validate_entry(entry):
             if any(token in ("pk:private_card", "pk:undealt_card") or token.startswith(("private_cards:", "deck:")) for token in tokens):
                 raise ProductionDatasetError("Poker complete view contains hidden-card tokens")
         elif tokens[2].startswith("view:imperfect:"):
-            viewer = "p" + tokens[2].split(":", 2)[2]
+            viewer = tokens[2].split(":", 2)[2]
             # pk:private_card markers: the next token should be pk:seat:pN for the viewer
             private_marker_indices = [i for i, t in enumerate(tokens) if t == "pk:private_card"]
             if not (1 <= len(private_marker_indices) <= 10):
@@ -441,7 +451,7 @@ def validate_entry(entry):
                 if not call_token.startswith("br:bid:"):
                     raise ProductionDatasetError(f"Expected bridge bid call after seat, got: {call_token}")
                 call = call_token.split(":", 2)[2]
-                if not re.fullmatch(r"(?:PASS|X|XX|[1-7][CDHSN])", call):
+                if not re.fullmatch(r"(?:PASS|X|XX|[1-7](?:[CDHS]|NT))", call):
                     raise ProductionDatasetError(f"Invalid bridge bid token: {call_token}")
                 calls.append(call)
                 i += 1

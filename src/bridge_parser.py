@@ -25,7 +25,7 @@ def _canonical_call(raw):
         return "X"
     if call in {"XX", "RDBL"}:
         return "XX"
-    return call.replace("NT", "N")
+    return call
 
 
 def _canonical_card(raw):
@@ -201,14 +201,16 @@ def _parse_play(block, tags):
 
 
 def _contract_trump(tags, calls):
-    contract = (tags.get("Contract") or "").upper().replace("NT", "N")
-    match = re.search(r"[1-7]([CDHSN])", contract)
+    contract = (tags.get("Contract") or "").upper()
+    match = re.match(r"[1-7](?:([CDHS])|NT)", contract)
     if match:
         strain = match.group(1)
-        return None if strain == "N" else strain.lower()
+        return None if strain is None else strain.lower()
     for call in reversed(calls):
-        if re.fullmatch(r"[1-7][CDHSN]", call):
-            return None if call[1] == "N" else call[1].lower()
+        match = re.fullmatch(r"[1-7](?:([CDHS])|NT)", call)
+        if match:
+            strain = match.group(1)
+            return None if strain is None else strain.lower()
     return None
 
 
@@ -335,7 +337,7 @@ def _bridge_block_to_tokens(block, source_path):
             hand_tokens.extend(_br_card_tokens("hand", seat, card))
         player_num = SEAT_TO_PLAYER[seat]
         entries.append((
-            ["<bos>", "<bridge>", f"view:imperfect:{player_num}"]
+            ["<bos>", "<bridge>", f"view:imperfect:p{player_num}"]
             + hand_tokens
             + context_tokens
             + ["<eos>"],
