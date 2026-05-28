@@ -1090,7 +1090,7 @@ actions = [
         self.assertFalse(is_counted_move_token("ch:b5"))
         self.assertFalse(is_counted_move_token("ch:=q"))
         self.assertFalse(is_counted_move_token("sh:7f"))
-        self.assertFalse(is_counted_move_token("sh:+"))
+        self.assertFalse(is_counted_move_token("sh:promote"))
         self.assertFalse(is_counted_move_token("go:pd"))
         self.assertFalse(is_counted_move_token("go:pass"))
         self.assertFalse(is_counted_move_token("br:card:Ah"))

@@ -130,7 +130,7 @@ def validate_shogi_token_sequence(tokens):
         i += 2
         # Check for promotion suffix
         promote = ""
-        if i < len(inner) and inner[i] == "sh:+":
+        if i < len(inner) and inner[i] == "sh:promote":
             promote = "+"
             i += 1
         # Reconstruct USI move string
@@ -196,7 +196,7 @@ def parse_csa_to_tokens(csa_path):
                 move_tokens.append(f"sh:{color}:{src}")
                 move_tokens.append(f"sh:{dest}")
                 if usi.endswith("+"):
-                    move_tokens.append("sh:+")
+                    move_tokens.append("sh:promote")
             is_black_turn = not is_black_turn
 
         tokens = ["<bos>", "<shogi>"] + setup + move_tokens + [f"sh:end:{terminal_reason}", "<eos>"]

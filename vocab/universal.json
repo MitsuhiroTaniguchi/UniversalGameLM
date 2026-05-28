@@ -1502,7 +1502,7 @@
   "sh:w:R*": 1500,
   "sh:turn:black": 1501,
   "sh:turn:white": 1502,
-  "sh:+": 1503,
+  "sh:promote": 1503,
   "sh:end:resign": 1504,
   "sh:end:repetition": 1505,
   "sh:end:impasse": 1506,

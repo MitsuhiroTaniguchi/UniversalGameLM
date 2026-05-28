@@ -1501,7 +1501,7 @@ sh:w:B*
 sh:w:R*
 sh:turn:black
 sh:turn:white
-sh:+
+sh:promote
 sh:end:resign
 sh:end:repetition
 sh:end:impasse
