@@ -11,51 +11,77 @@
         "name": "Stockfish fishtest LTC PGNs",
         "source_class": "engine_top",
         "quality_tier": "primary_3b",
-        "license": "LGPL-3.0 dataset; preserve Stockfish/fishtest attribution",
+        "license": "LGPL-3.0 (applied to dataset on HuggingFace, separate from engine GPL-3.0)",
+        "license_verified": true,
         "url": "https://huggingface.co/datasets/official-stockfish/fishtest_pgns",
         "format": "pgn.gz",
         "priority": 1,
-        "notes": "About one billion Stockfish LTC games with engine eval/depth comments and metadata. Best verified volume source for chess; prefer before lower-quality human data."
+        "volume": "~1 billion games, ~1.03 TB compressed",
+        "recommended_subset": "2022+ tests, passed status, avg depth >= 15, game length >= 20 moves",
+        "annotations": "Per-move eval (centipawns), search depth, time spent: {-0.91/21 1.749s}",
+        "notes": "Best verified volume source. Each game has per-move engine evaluation and depth annotations. Filter by test-pass status from JSON metadata, recency (2022+), and minimum search depth. ~20M filtered games recommended for the 3B mix."
       },
       {
         "name": "Leela Chess Zero self-play training PGNs",
         "source_class": "engine_top",
         "quality_tier": "primary_3b",
-        "license": "verify Lc0 data license and attribution before redistribution",
+        "license": "Engine is GPLv3; training data/PGNs have NO explicit license statement. Game outputs are not derivative works of GPL software. Contact Lc0 team for explicit confirmation before redistribution.",
+        "license_verified": false,
         "url": "https://storage.lczero.org/files/training_pgns/",
-        "format": "pgn",
+        "format": "tar.gz (10K games each)",
         "priority": 2,
-        "notes": "Superhuman neural-engine self-play. Mix with Stockfish fishtest to reduce single-engine style bias; keep network/run metadata in shard manifests."
-      },
-      {
-        "name": "TCEC engine championship PGNs",
-        "source_class": "engine_top",
-        "quality_tier": "seed_eval_finetune",
-        "license": "CC BY-SA 3.0 for PGN game files",
-        "url": "https://github.com/TCEC-Chess/tcecgames",
-        "format": "pgn",
-        "priority": 3,
-        "notes": "Highest-profile engine tournament games. Very high quality but too small for 3B tokens; use as evaluation, seed, and style-diversity mix."
+        "volume": "2.5+ billion self-play games (~1M/day ongoing)",
+        "recommended_subset": "Network generations T75+/T80+ (superhuman), ~1.5M games",
+        "notes": "Neural MCTS engine with fundamentally different style from Stockfish alpha-beta. Critical for style diversity. Early networks are weak — filter to latest 20-30% of generations. May contain many short draws at high strength."
       },
       {
         "name": "Lichess Elite Database",
         "source_class": "human_top",
         "quality_tier": "primary_or_mix",
-        "license": "verify database.nikonoel.fr redistribution terms",
+        "license": "CC0 (inherited from Lichess CC0 public domain data)",
+        "license_verified": true,
         "url": "https://database.nikonoel.fr/",
-        "format": "pgn",
+        "format": "pgn (ZIP archives)",
+        "priority": 3,
+        "volume": "26.3 million games (2013-2025)",
+        "filters_applied": "2500+ vs 2300+ (post Dec 2021), bullet excluded",
+        "notes": "GM/IM-level human games. Provides opening diversity and practical play patterns that engines lack. Use ~750K games as 3% of the 3B mix for human-style diversity."
+      },
+      {
+        "name": "TCEC engine championship PGNs",
+        "source_class": "engine_top",
+        "quality_tier": "seed_eval_finetune",
+        "license": "CC BY-SA 3.0 (PGN files), Apache 2.0 (scripts)",
+        "license_verified": true,
+        "url": "https://github.com/TCEC-Chess/tcecgames",
+        "format": "pgn (with eval comments)",
         "priority": 4,
-        "notes": "Filtered Lichess standard games by strong-player rating thresholds with bullet excluded. Prefer over raw Lichess for human-style top play."
+        "volume": "~50,000-80,000 games across 28+ seasons",
+        "notes": "Highest-quality multi-engine tournament games at very long time controls. Too small for primary volume but invaluable as evaluation seed and for inter-engine style diversity (games between DIFFERENT engines)."
+      },
+      {
+        "name": "ICCF Correspondence Chess",
+        "source_class": "human_top",
+        "quality_tier": "candidate_primary",
+        "license": "Access requires ICCF registration or Chessify subscription; redistribution terms unclear",
+        "license_verified": false,
+        "url": "https://www.iccf.com/",
+        "format": "pgn",
+        "priority": 5,
+        "volume": "2+ million games",
+        "notes": "Near-engine-quality play (engine-assisted correspondence, days per move). Represents exhaustive positional analysis. Needs license investigation before use."
       },
       {
         "name": "Raw Lichess standard rated games",
         "source_class": "human_public",
         "quality_tier": "excluded_from_primary",
-        "license": "database.lichess.org terms / CC0-style public database notice",
+        "license": "CC0",
+        "license_verified": true,
         "url": "https://database.lichess.org/",
         "format": "pgn.zst",
         "priority": 99,
-        "notes": "Do not use unfiltered for primary training. Only use with explicit rating/time-control/cheat-filter gates or for robustness/evaluation studies."
+        "volume": "7.8 billion games",
+        "notes": "Do not use unfiltered for primary training. Only use with explicit rating/time-control/cheat-filter gates."
       }
     ],
     "shogi": [
@@ -63,211 +89,403 @@
         "name": "AobaZero self-play CSA archives",
         "source_class": "engine_top",
         "quality_tier": "primary_3b",
-        "license": "verify upstream redistribution terms before mirroring raw records",
+        "license": "Public domain (game records); GPL v3 (engine code only). README states: 'USIエンジンであるaobazはGPL v3です。それ以外はpublic domainです'",
+        "license_verified": true,
         "url": "https://github.com/kobanium/aobazero",
-        "format": "csa.xz",
+        "format": "csa.xz (~10K games per archive)",
         "priority": 1,
-        "notes": "Primary move-only source. AlphaZero-style engine self-play; preserve network/run provenance and checksums."
-      },
-      {
-        "name": "dlshogi / DeepLearningShogi generated training records",
-        "source_class": "engine_top",
-        "quality_tier": "candidate_primary",
-        "license": "verify each released archive or developer-provided link before redistribution",
-        "url": "https://tadaoyamaoka.hatenablog.com/entry/2021/05/06/223701",
-        "format": "hcpe/hcpe3/csa",
-        "priority": 2,
-        "notes": "GCT/dlshogi training archives include large hcpe3 self-play/evaluation data. Treat as candidate-primary only after concrete file availability, license, and hcpe-to-move-stream reconstruction are verified."
+        "volume": "39.8 million games (March 2019 - April 2021)",
+        "download_method": "Google Drive via rclone (Records01 folder). See: https://tokumini.hatenablog.com/entry/2020/09/11/140000",
+        "recommended_subset": "Network generation 2000+ (~last 40% of training, ~15-20M games)",
+        "annotations": "MCTS visit counts for candidate moves in CSA comments",
+        "notes": "AlphaZero-style self-play, 3,460+ network generations. Late-training games are superhuman. Final network ~137 Elo above elmo. Filter out ILLEGAL_ACTION games. 39.8M games x 258 tok = ~10.3B tokens, 3.4x target."
       },
       {
         "name": "Floodgate yearly archives",
         "source_class": "engine_public",
         "quality_tier": "filtered_fallback_only",
-        "license": "public floodgate archive; preserve provenance and checksums",
-        "url": "https://wdoor.c.u-tokyo.ac.jp/",
-        "format": "csa.7z",
-        "priority": 50,
-        "notes": "Do not use wholesale. Use only with a documented engine-name/rating/date allowlist for top engines; otherwise keep for evaluation and coverage audits."
+        "license": "Public archive; preserve provenance and checksums",
+        "license_verified": true,
+        "url": "https://wdoor.c.u-tokyo.ac.jp/shogi/archive/",
+        "format": "csa.7z (yearly archives: wdoor{YEAR}.7z)",
+        "priority": 3,
+        "volume": "~1.2-1.8 million games total (2008-2026), ~100K-200K after R3000+ filter",
+        "filtering": "Both players R3000+, 50+ moves, resignation finish (yields ~18% survival rate per TadaoYamaoka)",
+        "top_engines": ["dlshogi", "AobaZero", "YaneuraOu", "Kristallweizen", "Suisho"],
+        "notes": "Multi-engine diversity supplement. Top engines include dlshogi, AobaZero, Kristallweizen, Suisho. Use only with documented rating/engine allowlist."
+      },
+      {
+        "name": "WCSC championship CSA archives",
+        "source_class": "engine_top",
+        "quality_tier": "seed_eval_finetune",
+        "license": "Public download from CSA website",
+        "license_verified": true,
+        "url": "http://www2.computer-shogi.org/",
+        "format": "csa (ZIP archives, SHIFT_JIS encoding)",
+        "priority": 4,
+        "volume": "~3,000-5,000 games across all championships",
+        "notes": "World Computer Shogi Championship official game records. Post-2023 games include evaluation values and PV lines. Highest quality multi-engine tournament games. Too small for volume but excellent evaluation seed."
+      },
+      {
+        "name": "dlshogi / GCT hcpe3 training data",
+        "source_class": "engine_top",
+        "quality_tier": "excluded_position_level_only",
+        "license": "No explicit license stated; availability not guaranteed",
+        "license_verified": false,
+        "url": "https://drive.google.com/drive/u/3/folders/1Lkh4HL0tMx9p3NNbHue9lvh_HOSBGxhv",
+        "format": "hcpe3 (per-position records, 38+ bytes each)",
+        "priority": 99,
+        "volume": "~1.58 billion positions across 75 hcpe3 files",
+        "notes": "EXCLUDED: hcpe3 stores individual (position, move, eval, result) tuples, NOT game-level move sequences. Cannot reconstruct sequential game records for LM training. The original CSA self-play games are not publicly available."
       }
     ],
     "go": [
       {
-        "name": "KataGo distributed self-play training data",
+        "name": "KataGo distributed self-play training games (SGF)",
         "source_class": "engine_top",
         "quality_tier": "primary_3b",
-        "license": "verify katagotraining.org data-use policy before redistribution",
-        "url": "https://katagotraining.org/",
-        "format": "sgf/training-data",
+        "license": "MIT-style for networks; data policy permits use 'by anyone' for training and research. DISCLAIMER.txt is standard as-is waiver.",
+        "license_verified": true,
+        "url": "https://katagoarchive.org/kata1/traininggames/",
+        "format": "sgf (daily .tar.bz2 archives, Dec 2020 - present)",
         "priority": 1,
-        "notes": "Primary Go source. Public stats show tens of millions of training games and billions of rows; retain run/network/rules/game-type metadata and prefer standard 19x19 normal/rating games for MahjongLM-like move streams."
+        "volume": "94.6 million total games (~47M at 19x19), 4.69 billion training rows",
+        "recommended_subset": "19x19 only, b28c512+ and b40c768 networks (~12M games)",
+        "annotations": "MCTS visit counts, value estimates, rules/komi per game",
+        "board_size_distribution": "~50% 19x19, rest triangularly distributed 9x9-18x18",
+        "network_license_url": "https://katagotraining.org/network_license/",
+        "notes": "Primary Go source. SGF files available directly at katagoarchive.org — no format conversion needed. 942 networks spanning random to superhuman. Filter to strong late-training networks and 19x19 for primary corpus. ~34,500 new games/day ongoing."
+      },
+      {
+        "name": "Leela Zero self-play SGF archives",
+        "source_class": "engine_top",
+        "quality_tier": "primary_or_mix",
+        "license": "Public domain (per developers)",
+        "license_verified": true,
+        "url": "https://leela.online-go.com/zero/",
+        "format": "sgf.xz (all_1M.sgf.xz through all_22M.sgf.xz)",
+        "priority": 2,
+        "volume": "21,219,288 self-play games + 1,264,007 match games",
+        "download_size": "~7.4 GB compressed",
+        "recommended_subset": "Networks 200+ (~last 30%, strongest phase), ~2M games",
+        "notes": "Pure AlphaGo Zero approach (single board size, no human knowledge). Project ended 2021-02-15. Different training methodology from KataGo adds style diversity. Final network #287 reached Elo 16,726."
+      },
+      {
+        "name": "ELF OpenGo self-play SGFs",
+        "source_class": "engine_top",
+        "quality_tier": "primary_or_mix",
+        "license": "BSD (code); game data publicly released by FAIR",
+        "license_verified": true,
+        "url": "https://dl.fbaipublicfiles.com/elfopengo/",
+        "format": "sgf",
+        "priority": 3,
+        "volume": "19,690,954 SGF files (v2 training run)",
+        "notes": "Facebook AI Research superhuman Go engine. Different architecture and training from KataGo/LZ. Project archived Dec 2020 — verify download URL accessibility. Use ~500K games for additional engine style diversity."
+      },
+      {
+        "name": "Joe's Go Database (JGDB)",
+        "source_class": "human_top",
+        "quality_tier": "seed_eval_finetune",
+        "license": "Public domain",
+        "license_verified": true,
+        "url": "https://pjreddie.com/projects/jgdb/",
+        "format": "sgf (.tar.gz 194MB / .zip 345MB)",
+        "priority": 4,
+        "volume": "535,721 professional/top-amateur games",
+        "notes": "Best free professional game collection. Provides opening diversity and historical strategic patterns that engine self-play lacks."
+      },
+      {
+        "name": "CWI Japanese Professional Go Games",
+        "source_class": "human_top",
+        "quality_tier": "seed_eval_finetune",
+        "license": "Free download; verify redistribution terms",
+        "license_verified": false,
+        "url": "https://homepages.cwi.nl/~aeb/go/games/games/",
+        "format": "sgf (.tar.gz 46MB)",
+        "priority": 5,
+        "volume": "90,000+ professional games",
+        "notes": "Japanese professional game archive. Complements JGDB for professional game coverage."
+      },
+      {
+        "name": "Tygem 9D vs 9D dataset",
+        "source_class": "human_top",
+        "quality_tier": "primary_or_mix",
+        "license": "GPL-3.0 (tools); game data from server scraping — redistribution ambiguous",
+        "license_verified": false,
+        "url": "https://github.com/yenw/computer-go-dataset",
+        "format": "gib (Tygem native, converter to SGF included)",
+        "priority": 6,
+        "volume": "1,516,031 games (9D vs 9D, 2005-2016)",
+        "notes": "Strong amateur/semi-pro games from Tygem server. Highest-ranked human online play. Use ~500K for human-style diversity."
+      },
+      {
+        "name": "KGS 6d+ game archives",
+        "source_class": "human_top",
+        "quality_tier": "seed_eval_finetune",
+        "license": "Public archives at u-go.net",
+        "license_verified": false,
+        "url": "https://www.u-go.net/gamerecords/",
+        "format": "sgf (ZIP/tar.gz by month)",
+        "priority": 7,
+        "volume": "~280,000 games (6d+, 2001-2019)",
+        "notes": "Strong amateur games. AlphaGo's supervised learning used 160K KGS 6d-9d games."
       },
       {
         "name": "ZhiziGo KataGo self-play mirror",
         "source_class": "engine_top",
-        "quality_tier": "candidate_primary",
-        "license": "MIT per dataset card; verify before redistribution",
+        "quality_tier": "excluded_duplicate",
+        "license": "MIT per dataset card",
+        "license_verified": true,
         "url": "https://www.modelscope.cn/datasets/sigmoid/KataGo_ZhiziGo_selfplay",
         "format": "katago_training_tar",
-        "priority": 2,
-        "notes": "Large modern KataGo-format self-play mirror. Use as a practical bulk source if conversion from KataGo training format to SGF/move stream is implemented and validated."
-      },
-      {
-        "name": "Joe's Go Database",
-        "source_class": "human_top",
-        "quality_tier": "seed_eval_finetune",
-        "license": "public domain statement by maintainer",
-        "url": "https://pjreddie.com/projects/jgdb/",
-        "format": "sgf",
-        "priority": 3,
-        "notes": "More than 500k professional/top-amateur SGFs. Good human-style seed/evaluation corpus; not enough for 3B tokens."
+        "priority": 99,
+        "notes": "EXCLUDED: Mirror of kata1 data from katagotraining.org. ZhiziGo contributed compute/optimizer improvements to kata1 run. Do not double-count with primary KataGo source. Useful only as alternate download mirror."
       },
       {
         "name": "OGS public SGF collection",
         "source_class": "human_public",
         "quality_tier": "excluded_from_primary",
-        "license": "research/AI training stated by corpus maintainer; verify before redistribution",
+        "license": "Redistributed with OGS permission",
+        "license_verified": true,
         "url": "https://za3k.com/ogs/",
-        "format": "sgf",
+        "format": "sgf/json",
         "priority": 99,
-        "notes": "Do not use unfiltered for primary training. Only use with strict rank filters or for robustness/evaluation."
+        "volume": "56 million games (all ranks, 2025 dump)",
+        "notes": "Do not use unfiltered. Includes all skill levels from beginners. Only use with strict rank filters."
       }
     ],
     "othello": [
       {
-        "name": "Egaroucid self-play training data",
-        "source_class": "engine_top",
-        "quality_tier": "primary_or_mix",
-        "license": "verify release-specific terms before redistribution",
-        "url": "https://github.com/Nyanyan/Egaroucid5/releases/",
-        "format": "selfplay_data",
-        "priority": 1,
-        "notes": "Public Othello AI self-play training data is available from Egaroucid releases/docs. Prefer over random legal-move datasets; convert to terminal move streams with replay validation."
-      },
-      {
-        "name": "Edax high-depth self-play generation",
+        "name": "Egaroucid self-play generation",
         "source_class": "engine_top",
         "quality_tier": "primary_3b_generated",
-        "license": "generated records can be owned by this project; verify Edax engine license for redistribution of binaries/configs",
-        "url": "https://github.com/abulmo/edax-reversi",
-        "format": "generated_pgn/jsonl",
-        "priority": 2,
-        "notes": "Primary volume path. Generate deterministic self-play with fixed engine version, depth/time settings, opening seed policy, and validation replay."
+        "license": "GPL-3.0 engine; generated game records are not derivative works and can be freely used/redistributed",
+        "license_verified": true,
+        "url": "https://github.com/Nyanyan/Egaroucid",
+        "format": "generated_move_sequence",
+        "priority": 1,
+        "volume_estimate": "40M+ games at level 11 (superhuman: 11-ply midgame + 25-ply perfect endgame)",
+        "generation_config": {
+          "engine_version": "7.8.1",
+          "primary_level": 11,
+          "high_quality_level": 17,
+          "opening_set": "XOT 10784 balanced 8-move openings",
+          "opening_url": "https://berg.earthlingz.de/xot/aboutxot.php",
+          "parallelization": "N single-threaded instances, one per core",
+          "estimated_speed_per_core": "~480 games/hour at level 11"
+        },
+        "notes": "Strongest open-source Othello engine (beats Edax at all levels). Level 11 produces superhuman play. Use XOT openings for diversity."
       },
       {
-        "name": "Solved-line / perfect-play Othello seeds",
+        "name": "Edax self-play generation",
         "source_class": "engine_top",
-        "quality_tier": "seed_eval_finetune",
-        "license": "derive from cited solved-game publication/artifacts only after license review",
-        "url": "https://arxiv.org/abs/2310.19387",
-        "format": "move_sequence",
+        "quality_tier": "primary_3b_generated",
+        "license": "GPL-3.0 engine; generated game records are not derivative works",
+        "license_verified": true,
+        "url": "https://github.com/abulmo/edax-reversi",
+        "format": "generated_move_sequence",
+        "priority": 2,
+        "volume_estimate": "2M games at level 15 for style diversity",
+        "generation_config": {
+          "engine_version": "4.6",
+          "level": 15,
+          "avx_fork": "https://github.com/okuhara/edax-reversi-AVX",
+          "self_play_mode": "mode 2, auto-start on, auto-swap on"
+        },
+        "notes": "Second-strongest open-source Othello engine. Use at level 15 as style-diversity supplement."
+      },
+      {
+        "name": "Egaroucid released 2M game transcripts",
+        "source_class": "engine_top",
+        "quality_tier": "primary_or_mix",
+        "license": "Free to use for training; redistribution prohibited",
+        "license_verified": true,
+        "url": "https://www.egaroucid.nyanyan.dev/en/technology/train-data/",
+        "format": "selfplay_transcript",
         "priority": 3,
-        "notes": "Othello is weakly solved as a draw under perfect play. Use solved lines and deviations as tiny gold evaluation/anchor sets, not as volume data."
+        "volume": "2,000,000 games (level 11, 10K games per file)",
+        "notes": "Pre-generated self-play transcripts. Usable for training but cannot be redistributed in raw form."
       },
       {
         "name": "WTHOR tournament database",
         "source_class": "human_top",
         "quality_tier": "seed_eval_finetune",
-        "license": "verify French Federation of Othello/WTHOR terms before redistribution",
+        "license": "Public download from FFOthello; verify redistribution terms",
+        "license_verified": false,
         "url": "https://www.ffothello.org/informatique/la-base-wthor/",
         "format": "wthor/wtb",
         "priority": 4,
-        "notes": "High-quality human tournament seed/evaluation set, but too small for 3B tokens by itself."
+        "volume": "137,548 games (1977-2025)",
+        "notes": "Highest-quality human tournament records. Invaluable as evaluation seed and human-style diversity."
       },
       {
         "name": "Random/synthetic public Othello datasets",
         "source_class": "generated_or_curated",
         "quality_tier": "excluded_from_policy_training",
-        "license": "verify each dataset card before redistribution",
+        "license": "verify each dataset card",
+        "license_verified": false,
         "url": "https://huggingface.co/datasets/tdooms/othello",
         "format": "hf_dataset",
         "priority": 99,
-        "notes": "Do not use for policy imitation if generated by random legal moves. Useful only for board-state representation or legality diagnostics."
+        "notes": "EXCLUDED: Generated by random legal moves (othello_world lineage). Not suitable for policy imitation."
       }
     ],
     "poker": [
       {
-        "name": "PHH full corpus ACPC public subsets",
+        "name": "ACPC NLHE hands (PHH/Zenodo corpus)",
         "source_class": "engine_top",
         "quality_tier": "primary_3b",
-        "license": "MIT for GitHub subset; verify Zenodo full corpus license and ACPC redistribution constraints",
-        "url": "https://github.com/uoftcprg/phh-dataset",
-        "format": "phh/phhs",
+        "license": "CC-BY 4.0 (Zenodo v3 full corpus, DOI: 10.5281/zenodo.17136841)",
+        "license_verified": true,
+        "url": "https://zenodo.org/records/17136841",
+        "format": "phh",
         "priority": 1,
-        "accepted_subsets": ["ACPC", "Annual Computer Poker Competition"],
-        "notes": "Use ACPC engine competition hands from the full corpus. Filter by path/metadata before tokenization; generic online hand histories are not primary."
+        "volume": "160,575,000 unique NLHE hands (278.8M total with duplicates)",
+        "download_size": "20.3 GB (poker-hand-histories.zip)",
+        "recommended_subset": "ACPC NLHE 2014-2017 (86.7M unique, strongest agent generations with EV estimates)",
+        "notes": "Annual Computer Poker Competition engine-vs-engine hands. 160M unique NLHE provides 43x the 3.7M needed for 3B tokens."
       },
       {
-        "name": "Pluribus released hands in PHH-compatible corpus",
+        "name": "ACPC FLHE hands (PHH/Zenodo corpus)",
+        "source_class": "engine_top",
+        "quality_tier": "primary_or_mix",
+        "license": "CC-BY 4.0 (Zenodo v3 full corpus)",
+        "license_verified": true,
+        "url": "https://zenodo.org/records/17136841",
+        "format": "phh",
+        "priority": 2,
+        "volume": "341,172,750 fixed-limit hands (2009-2014)",
+        "notes": "Fixed-limit hold'em variant from ACPC. Include for game-variant diversity."
+      },
+      {
+        "name": "Pluribus released hands",
         "source_class": "engine_top",
         "quality_tier": "seed_eval_finetune",
-        "license": "verify Brown and Sandholm supplementary data terms",
+        "license": "Verify Brown and Sandholm supplementary data terms",
+        "license_verified": false,
         "url": "https://github.com/uoftcprg/phh-dataset",
-        "format": "phh/phhs",
-        "priority": 2,
-        "accepted_subsets": ["Pluribus"],
-        "notes": "Very high quality but small compared with 3B-token target; use as top-quality seed/evaluation or mix with ACPC."
+        "format": "phh",
+        "priority": 3,
+        "volume": "10,000 hands (6-player superhuman NLHE)",
+        "notes": "Highest-quality 6-player poker data from Pluribus (Science 2019). Invaluable as evaluation seed."
+      },
+      {
+        "name": "Slumbot2019 self-play generation",
+        "source_class": "engine_top",
+        "quality_tier": "candidate_primary",
+        "license": "MIT",
+        "license_verified": true,
+        "url": "https://github.com/ericgjackson/slumbot2019",
+        "format": "generated",
+        "priority": 4,
+        "notes": "2018 ACPC champion, strongest openly available HUNLHE agent. C++ CFR/MCCFR. ACPC corpus volume makes this unnecessary for 3B target."
       },
       {
         "name": "Generic online poker hand histories in PHH corpus",
         "source_class": "human_public",
         "quality_tier": "excluded_from_primary",
-        "license": "verify source-specific terms",
+        "license": "Verify source-specific terms",
+        "license_verified": false,
         "url": "https://github.com/uoftcprg/phh-dataset",
-        "format": "phh/phhs",
+        "format": "phh",
         "priority": 99,
+        "volume": "21,605,687 HandHQ hands (anonymized online, 2009)",
         "notes": "Do not use unfiltered for primary policy training; stakes and player quality are mixed."
       }
     ],
     "bridge": [
       {
-        "name": "OpenSpiel bridge generated data / WBridge5-style benchmarks",
-        "source_class": "engine_top",
-        "quality_tier": "candidate_primary",
-        "license": "verify OpenSpiel dataset/model license and generated-record terms",
-        "url": "https://console.cloud.google.com/storage/browser/openspiel-data/bridge",
-        "format": "generated_bridge_data",
-        "priority": 1,
-        "notes": "OpenSpiel bridge work references generated bridge data. Prefer only if full auction+play reconstruction and convention metadata can be validated."
-      },
-      {
-        "name": "WBridge5 / RoboBridge high-quality self-play generation",
+        "name": "Ben (lorserker/ben) self-play generation",
         "source_class": "engine_top",
         "quality_tier": "primary_3b_generated",
-        "license": "verify engine license and generated-record redistribution terms",
-        "url": "https://www.computerbridge.se/wbridge5/",
+        "license": "GPL-3.0 engine; generated game records (PBN output) are not derivative works",
+        "license_verified": true,
+        "url": "https://github.com/lorserker/ben",
         "format": "generated_pbn",
-        "priority": 2,
-        "notes": "Primary volume path if engine automation is available. Store engine version, convention card, deal seed, DDS/settings, and validation checks."
+        "priority": 1,
+        "volume_estimate": "5.9M+ deals (full bidding + play)",
+        "generation_config": {
+          "bidding": "Neural network (SAYC convention)",
+          "play": "DDS-assisted",
+          "self_play_command": "python game.py",
+          "estimated_speed": "1-5 deals/sec per process, 8-40 deals/sec with 8 processes",
+          "estimated_time": "1.7-8.5 days for 5.9M deals on 8 processes"
+        },
+        "notes": "Only open-source engine providing both NN bidding and DDS-assisted play. Primary volume generation path."
       },
       {
-        "name": "DDS-assisted double-dummy play generation",
+        "name": "OpenSpiel WBridge5 1M dataset",
+        "source_class": "engine_top",
+        "quality_tier": "primary_or_mix",
+        "license": "Verify OpenSpiel dataset license (Apache-2.0 for code)",
+        "license_verified": false,
+        "url": "https://console.cloud.google.com/storage/browser/openspiel-data/bridge",
+        "format": "bridge_data",
+        "priority": 2,
+        "volume": "1,000,000 deals (WBridge5 SAYC bidding + play)",
+        "notes": "Pre-generated WBridge5 self-play data from Lockhart et al. 2020. Download from GCS."
+      },
+      {
+        "name": "DDS v3.0.0 double-dummy solving",
         "source_class": "engine_top",
         "quality_tier": "candidate_primary",
-        "license": "verify dds-bridge/dds license and generated-record terms",
+        "license": "Apache-2.0",
+        "license_verified": true,
         "url": "https://github.com/dds-bridge/dds",
         "format": "generated_pbn",
         "priority": 3,
-        "notes": "Use for omniscient play-quality generation and validation, not as a replacement for single-dummy bidding unless paired with a strong bidding engine."
+        "notes": "Double-dummy solver only (no bidding). 8-10 deals/sec. Use with Ben bidding NN for hybrid pipeline."
+      },
+      {
+        "name": "Pgx precomputed DDS results",
+        "source_class": "engine_top",
+        "quality_tier": "candidate_primary",
+        "license": "Verify Pgx dataset license",
+        "license_verified": false,
+        "url": "https://github.com/sotetsuk/pgx",
+        "format": "dds_results",
+        "priority": 4,
+        "volume": "12,500,000 boards with DD solutions + 100K eval",
+        "notes": "Pre-solved DD trick tables. No bidding/play. Useful as seeds for Ben bidding overlay."
+      },
+      {
+        "name": "Pavlicek solved deals library",
+        "source_class": "engine_top",
+        "quality_tier": "candidate_primary",
+        "license": "Verify DealerV2 / Richard Pavlicek terms",
+        "license_verified": false,
+        "url": "https://github.com/dealerv2/Dealer-Version-2-",
+        "format": "dealer_db",
+        "priority": 5,
+        "volume": "10,485,760 deals (solved 20 times: 4 seats x 5 strains)",
+        "notes": "Pre-solved DD results only. Fastest hybrid generation: overlay Ben bidding NN (160-400 deals/sec)."
+      },
+      {
+        "name": "BBO Vugraph tournament archives",
+        "source_class": "human_top",
+        "quality_tier": "primary_or_mix",
+        "license": "Verify BBO/Vugraph terms before bulk redistribution",
+        "license_verified": false,
+        "url": "https://www.bridgebase.com/vugraph_archives/vugraph_archives.php",
+        "format": "lin",
+        "priority": 6,
+        "volume": "~600,000 boards (Bermuda Bowl, Venice Cup, NABC, etc.)",
+        "conversion_tools": [
+          "https://github.com/OneTrickPony82/Bridge-Tools",
+          "https://github.com/forrestrice/bridge-bots"
+        ],
+        "notes": "Elite human tournament records with full bidding + play. LIN format requires conversion to PBN."
       },
       {
         "name": "Vugraph Project / ComputerBridge PBN finals",
         "source_class": "human_top",
         "quality_tier": "seed_eval_finetune",
-        "license": "verify event and archive redistribution terms before mirroring raw records",
+        "license": "Verify event and archive redistribution terms",
+        "license_verified": false,
         "url": "https://www.computerbridge.se/finals-world-championship-in-pbn/",
         "format": "pbn",
-        "priority": 4,
-        "notes": "World Championship, NABC, Bermuda Bowl, Venice Cup, Vanderbilt and other top event PBN files. High-quality seed, but too small for 3B tokens alone."
-      },
-      {
-        "name": "BBO/Vugraph public archives",
-        "source_class": "human_public",
-        "quality_tier": "filtered_fallback_only",
-        "license": "verify BBO/Vugraph terms before bulk redistribution",
-        "url": "https://www.bridgebase.com/vugraph/",
-        "format": "lin/pbn",
-        "priority": 50,
-        "notes": "Use only with event/player filters for top-level broadcast matches; convert LIN to PBN before ingestion and preserve event provenance."
+        "priority": 7,
+        "notes": "World Championship, Bermuda Bowl, Venice Cup PBN files. High-quality seed."
       }
     ]
   }

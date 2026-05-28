@@ -3,6 +3,8 @@ import hashlib
 import json
 import os
 import re
+import sys
+import time
 from functools import lru_cache
 from pathlib import Path
 import chess
@@ -73,7 +75,6 @@ POKER_NON_SEAT_ACTIONS = {
     "pk:act:deal_board",
     "pk:act:hidden",
 }
-_POKER_RANK_SUIT_CHARS = set("AKQJThdcs98765432")
 
 
 class ProductionDatasetError(RuntimeError):
@@ -104,10 +105,9 @@ def validate_poker_public_sequence(tokens):
             "pk:winner:",
         )):
             continue
-        if token in ("pk:private_card", "pk:undealt_card", "pk:card"):
+        if token in ("pk:private_card", "pk:undealt_card"):
             continue
-        # Skip decomposed rank/suit sub-tokens (single char after "pk:")
-        if token.startswith("pk:") and len(token) == 4 and token[3:] in _POKER_RANK_SUIT_CHARS:
+        if token.startswith("pk:card:"):
             continue
         if token.startswith("pk:seat:"):
             if not re.fullmatch(r"pk:seat:p\d+", token):
@@ -147,7 +147,7 @@ def validate_poker_public_sequence(tokens):
         raise ProductionDatasetError(f"Invalid poker token: {token}")
 
 
-@lru_cache(maxsize=4096)
+@lru_cache(maxsize=65536)
 def source_id_for_path(path):
     if str(path).startswith("hf://"):
         digest = hashlib.sha256(str(path).encode("utf-8")).hexdigest()[:16]
@@ -362,7 +362,8 @@ def validate_entry(entry):
     if game == "bridge":
         if not tokens[2].startswith("view:"):
             raise ProductionDatasetError("Bridge entry is missing view token")
-        # Parse hand cards from multi-token sequences: br:hand:SEAT br:RANK br:SUIT
+        _BR_RANK_CHARS = set("AKQJT98765432")
+        _BR_SUIT_CHARS = set("shdc")
         hand_marker_indices = [i for i, t in enumerate(tokens) if t.startswith("br:hand:")]
         cards = []
         hands = {}
@@ -370,15 +371,12 @@ def validate_entry(entry):
             seat = tokens[mi].split(":", 2)[2]
             if seat not in {"N", "E", "S", "W"}:
                 raise ProductionDatasetError(f"Invalid bridge hand seat: {tokens[mi]}")
-            if mi + 2 >= len(tokens):
-                raise ProductionDatasetError(f"Bridge hand token missing rank/suit after {tokens[mi]}")
-            rank_token = tokens[mi + 1]
-            suit_token = tokens[mi + 2]
-            if not (rank_token.startswith("br:") and len(rank_token) == 4 and rank_token[3:] in "AKQJT98765432"):
-                raise ProductionDatasetError(f"Invalid bridge hand rank token: {rank_token}")
-            if not (suit_token.startswith("br:") and len(suit_token) == 4 and suit_token[3:] in "shdc"):
-                raise ProductionDatasetError(f"Invalid bridge hand suit token: {suit_token}")
-            card = rank_token[3:] + suit_token[3:]
+            if mi + 1 >= len(tokens):
+                raise ProductionDatasetError(f"Bridge hand token missing card after {tokens[mi]}")
+            card_token = tokens[mi + 1]
+            if not (card_token.startswith("br:card:") and len(card_token) == 10 and card_token[8] in _BR_RANK_CHARS and card_token[9] in _BR_SUIT_CHARS):
+                raise ProductionDatasetError(f"Invalid bridge hand card token: {card_token}")
+            card = card_token[8:]
             hands.setdefault(seat, []).append(card)
             cards.append(card)
         hand_count = len(cards)
@@ -404,8 +402,6 @@ def validate_entry(entry):
         calls = []
         played_cards = []
         played_seats = []
-        _BR_RANK_CHARS = set("AKQJT98765432")
-        _BR_SUIT_CHARS = set("shdc")
         i = 3  # skip <bos> <bridge> view:*
         end = len(tokens) - 1  # stop before <eos>
         while i < end:
@@ -428,12 +424,9 @@ def validate_entry(entry):
                 i += 1
                 continue
             if token.startswith("br:hand:"):
-                # Hand marker: skip marker + rank + suit (3 tokens)
-                i += 3
+                i += 2
                 continue
-            # Rank/suit sub-tokens from hand sequences already consumed by +3 skip above,
-            # but if we encounter a stray br: rank/suit token, skip it
-            if token.startswith("br:") and len(token) == 4 and token[3:] in (_BR_RANK_CHARS | _BR_SUIT_CHARS):
+            if token.startswith("br:card:"):
                 i += 1
                 continue
             if token.startswith("br:bid:"):
@@ -454,22 +447,18 @@ def validate_entry(entry):
                 i += 1
                 continue
             if token.startswith("br:play:"):
-                # Play: br:play:SEAT br:RANK br:SUIT (3 tokens)
                 seat = token.split(":", 2)[2]
                 if seat not in {"N", "E", "S", "W"}:
                     raise ProductionDatasetError(f"Invalid bridge play seat: {token}")
-                if i + 2 >= end:
-                    raise ProductionDatasetError(f"Bridge play token missing rank/suit: {token}")
-                rank_token = tokens[i + 1]
-                suit_token = tokens[i + 2]
-                if not (rank_token.startswith("br:") and len(rank_token) == 4 and rank_token[3:] in _BR_RANK_CHARS):
-                    raise ProductionDatasetError(f"Invalid bridge play rank token: {rank_token}")
-                if not (suit_token.startswith("br:") and len(suit_token) == 4 and suit_token[3:] in _BR_SUIT_CHARS):
-                    raise ProductionDatasetError(f"Invalid bridge play suit token: {suit_token}")
-                card = rank_token[3:] + suit_token[3:]
+                if i + 1 >= end:
+                    raise ProductionDatasetError(f"Bridge play token missing card: {token}")
+                card_token = tokens[i + 1]
+                if not (card_token.startswith("br:card:") and len(card_token) == 10 and card_token[8] in _BR_RANK_CHARS and card_token[9] in _BR_SUIT_CHARS):
+                    raise ProductionDatasetError(f"Invalid bridge play card token: {card_token}")
+                card = card_token[8:]
                 played_seats.append(seat)
                 played_cards.append(card)
-                i += 3
+                i += 2
                 continue
             raise ProductionDatasetError(f"Invalid bridge token: {token}")
         try:
@@ -596,11 +585,22 @@ def build_game_shards(
     output_format="universal_jsonl",
     tokenizer=None,
     cached_entries_path=None,
+    tokenizer_fingerprint=None,
+    allowed_source_ids=None,
 ):
     if output_format not in {"universal_jsonl", "mahjonglm_jsonl"}:
         raise ValueError(f"Unsupported output_format: {output_format}")
     if output_format == "mahjonglm_jsonl" and tokenizer is None:
         raise ValueError("mahjonglm_jsonl output requires a tokenizer")
+
+    effective_fingerprint = tokenizer_fingerprint
+    if tokenizer is not None:
+        fp = tokenizer.fingerprint()
+        if effective_fingerprint is not None and effective_fingerprint != fp:
+            raise ProductionDatasetError(
+                f"Tokenizer fingerprint changed mid-build: expected {effective_fingerprint}, got {fp}"
+            )
+        effective_fingerprint = fp
 
     row_transform = None
     if output_format == "mahjonglm_jsonl":
@@ -616,6 +616,20 @@ def build_game_shards(
     total_tokens = 0
     total_rows = 0
     uploaded = []
+    _progress_start = time.monotonic()
+    _progress_last = _progress_start
+
+    def _log_progress(shard_event=None):
+        nonlocal _progress_last
+        now = time.monotonic()
+        elapsed = now - _progress_start
+        pct = (total_tokens / target_tokens * 100) if target_tokens else 0
+        rate = total_tokens / elapsed if elapsed > 0 else 0
+        msg = f"[{game}] {total_rows:,} rows | {total_tokens:,} tokens ({pct:.2f}%) | {rate:,.0f} tok/s | {elapsed:.0f}s"
+        if shard_event:
+            msg += f" | shard {shard_event}"
+        print(msg, file=sys.stderr)
+        _progress_last = now
 
     try:
         if cached_entries_path:
@@ -624,6 +638,13 @@ def build_game_shards(
             entry_iter = iter_game_entries(game, input_paths, max_records=max_records)
         for entry in entry_iter:
             metadata = entry.get("metadata") or {}
+            if allowed_source_ids is not None:
+                sid = metadata.get("source_id")
+                if sid not in allowed_source_ids:
+                    raise ProductionDatasetError(
+                        f"Entry source_id '{sid}' is not in allowed_source_ids. "
+                        f"Source: {metadata.get('source_name', '?')}"
+                    )
             starts_new_view_group = game not in {"poker", "bridge"} or metadata.get("view_type") == "complete"
             if total_tokens >= target_tokens and starts_new_view_group:
                 break
@@ -635,10 +656,15 @@ def build_game_shards(
             total_tokens += row_token_count(stats_entry)
             total_rows += 1
 
-            if completed and uploader:
-                repo_path = str(Path(repo_prefix) / Path(completed["path"]).name)
-                uploader.upload_file(completed["path"], repo_path, delete_local=delete_after_upload)
-                uploaded.append(repo_path)
+            if time.monotonic() - _progress_last >= 30:
+                _log_progress()
+
+            if completed:
+                _log_progress(shard_event=Path(completed["path"]).name)
+                if uploader:
+                    repo_path = str(Path(repo_prefix) / Path(completed["path"]).name)
+                    uploader.upload_file(completed["path"], repo_path, delete_local=delete_after_upload)
+                    uploaded.append(repo_path)
 
         final = writer.close()
     except Exception:
@@ -651,10 +677,12 @@ def build_game_shards(
                 if writer.current_temp_path and Path(writer.current_temp_path).exists():
                     Path(writer.current_temp_path).unlink()
         raise
-    if final and uploader:
-        repo_path = str(Path(repo_prefix) / Path(final["path"]).name)
-        uploader.upload_file(final["path"], repo_path, delete_local=delete_after_upload)
-        uploaded.append(repo_path)
+    if final:
+        _log_progress(shard_event=f"{Path(final['path']).name} (final)")
+        if uploader:
+            repo_path = str(Path(repo_prefix) / Path(final["path"]).name)
+            uploader.upload_file(final["path"], repo_path, delete_local=delete_after_upload)
+            uploaded.append(repo_path)
 
     status = "ready" if total_tokens >= target_tokens else "insufficient"
     return {
@@ -663,7 +691,7 @@ def build_game_shards(
         "rows": total_rows,
         "tokens": total_tokens,
         "output_format": output_format,
-        "tokenizer_fingerprint": tokenizer.fingerprint() if tokenizer is not None else None,
+        "tokenizer_fingerprint": effective_fingerprint,
         "target_tokens": target_tokens,
         "token_deficit": max(target_tokens - total_tokens, 0),
         "shards": writer.completed,
@@ -688,6 +716,11 @@ def assert_source_allowed_for_primary_build(catalog, game, source_name, allow_fa
     source = source_catalog_entry(catalog, game, source_name)
     source_class = source.get("source_class")
     quality_tier = source.get("quality_tier")
+    if not source.get("license_verified", False):
+        raise ProductionDatasetError(
+            f"Source '{source_name}' for {game} has license_verified=false. "
+            f"Verify the license and set license_verified to true in source_catalog.json before production use."
+        )
     primary_tiers = {"primary_3b", "primary_3b_generated", "primary_or_mix"}
     if source_class in {"engine_top", "human_top"} and quality_tier in primary_tiers:
         return source

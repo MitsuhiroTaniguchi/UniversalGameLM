@@ -12,6 +12,7 @@ from src.production_pipeline import (
     build_game_shards,
     load_source_catalog,
     maybe_hf_uploader,
+    source_id_for_path,
 )
 from src.tokenizer import UniversalGameTokenizer
 
@@ -55,6 +56,10 @@ def main():
             "Production 3B-token builds require --source-name so the catalog quality gate can reject low-quality sources. "
             "Use --source-name with a source_catalog.json entry, or set --max-records for local smoke tests."
         )
+
+    allowed_source_ids = None
+    if args.source_name:
+        allowed_source_ids = {source_id_for_path(p) for p in args.input}
 
     tokenizer = None
     cached_entries_path = None
@@ -104,6 +109,7 @@ def main():
                 output_format=args.output_format,
                 tokenizer=tokenizer,
                 cached_entries_path=cached_entries_path,
+                allowed_source_ids=allowed_source_ids,
             )
     finally:
         if cached_entries_path:

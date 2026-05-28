@@ -14,7 +14,7 @@ SEAT_TO_PLAYER = {"N": 1, "E": 2, "S": 3, "W": 4}
 
 
 def _br_card_tokens(prefix, seat, card):
-    return [f"br:{prefix}:{seat}", f"br:{card[0]}", f"br:{card[1]}"]
+    return [f"br:{prefix}:{seat}", f"br:card:{card}"]
 
 
 def _canonical_call(raw):
@@ -119,9 +119,13 @@ def _parse_auction(block, tags):
     calls = []
     for line in auction_lines:
         line = re.sub(r"\{[^}]*\}", " ", line)
+        line = re.sub(r"=\d+=", " ", line)
         line = line.split(";")[0]
         for raw in line.split():
             if raw in {"*", "-", "AP"}:
+                continue
+            raw = raw.rstrip("!?*")
+            if not raw:
                 continue
             call = _canonical_call(raw)
             if CALL_RE.fullmatch(call):
@@ -277,28 +281,32 @@ def _bridge_block_to_tokens(block, source_path):
     if len(calls) < 4 and not played_cards:
         return None
 
-    context_tokens = []
+    pre_auction_tokens = []
     if dealer:
-        context_tokens.append(f"br:dealer:{dealer}")
+        pre_auction_tokens.append(f"br:dealer:{dealer}")
     vulnerable = tags.get("Vulnerable")
     if vulnerable:
-        context_tokens.append(f"br:vul:{vulnerable.upper().replace(' ', '_')}")
-    contract = tags.get("Contract")
-    if contract:
-        context_tokens.append(f"br:contract:{contract.upper().replace(' ', '_')}")
-    if trump_suit:
-        context_tokens.append(f"br:trump:{trump_suit}")
-    declarer = tags.get("Declarer")
-    if declarer:
-        context_tokens.append(f"br:declarer:{declarer.upper()}")
-    if play_starter:
-        context_tokens.append(f"br:play_leader:{play_starter}")
+        pre_auction_tokens.append(f"br:vul:{vulnerable.upper().replace(' ', '_')}")
+    bid_tokens = []
     bid_start_idx = SEATS.index(auction_starter) if auction_starter in SEATS else 0
     for i, call in enumerate(calls):
         bid_seat = SEATS[(bid_start_idx + i) % 4]
-        context_tokens.extend([f"br:bid:{bid_seat}", f"br:bid:{call}"])
+        bid_tokens.extend([f"br:bid:{bid_seat}", f"br:bid:{call}"])
+    post_auction_tokens = []
+    contract = tags.get("Contract")
+    if contract:
+        post_auction_tokens.append(f"br:contract:{contract.upper().replace(' ', '_')}")
+    if trump_suit:
+        post_auction_tokens.append(f"br:trump:{trump_suit}")
+    declarer = tags.get("Declarer")
+    if declarer:
+        post_auction_tokens.append(f"br:declarer:{declarer.upper()}")
+    if play_starter:
+        post_auction_tokens.append(f"br:play_leader:{play_starter}")
+    play_tokens = []
     for seat, card in played_by_seat:
-        context_tokens.extend(_br_card_tokens("play", seat, card))
+        play_tokens.extend(_br_card_tokens("play", seat, card))
+    context_tokens = pre_auction_tokens + bid_tokens + post_auction_tokens + play_tokens
 
     base_metadata = {
         "event": tags.get("Event", "Unknown"),

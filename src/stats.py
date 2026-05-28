@@ -17,9 +17,9 @@ NON_MOVE_PREFIXES = (
     "mj:tenbo:", "mj:dora", "mj:ura_dora", "mj:wall",
     "mj:haipai:", "mj:hidden_haipai:",
     "br:dealer:", "br:vul:", "br:contract:", "br:declarer:", "br:play_leader:", "br:trump:",
-    "br:hand:",
+    "br:hand:", "br:card:",
     "pk:private_card", "pk:undealt_card",
-    "pk:seat:", "pk:card", "pk:showdown:", "pk:winner:",
+    "pk:seat:", "pk:card:", "pk:showdown:", "pk:winner:",
     "pk:VARIANT:", "pk:STARTING_STACKS:", "pk:BLINDS_OR_STRADDLES:", "pk:ANTES:", "pk:MIN_BET:",
     "pk:ANTE_TRIMMING_STATUS:", "pk:BETTING_TYPE:",
     "pk:num:", "pk:amt:",
@@ -31,15 +31,13 @@ _BRIDGE_BID_SEATS = frozenset({"br:bid:N", "br:bid:E", "br:bid:S", "br:bid:W"})
 
 def _is_move_subtok(token):
     """Decomposed sub-token that completes a multi-token game action."""
-    if len(token) == 4 and token[:3] in ("br:", "pk:"):
-        return True
     if token in _BRIDGE_BID_SEATS:
         return True
     if token.startswith("ch:") and not token.startswith(("ch:w:", "ch:b:")):
         return True
     if token.startswith("sh:") and not token.startswith(("sh:b:", "sh:w:")):
         return True
-    if token.startswith("go:") and token not in ("go:b", "go:w"):
+    if token.startswith("go:") and not token.startswith(("go:b:", "go:w:")):
         return True
     return False
 
@@ -187,8 +185,8 @@ def analyze_dataset_stats(dataset):
 if __name__ == "__main__":
     # Test statistics
     mock_dataset = [
-        {"tokens": ["<bos>", "<chess>", "e2e4", "e7e5", "g1f3", "b8c6", "f1b5", "<eos>"], "game": "chess"},
-        {"tokens": ["<bos>", "<chess>", "e2e4", "c7c5", "g1f3", "d7d6", "<eos>"], "game": "chess"},
-        {"tokens": ["<bos>", "<shogi>", "7g7f", "1c1d", "2g2f", "3c3d", "8h2b+", "<eos>"], "game": "shogi"}
+        {"tokens": ["<bos>", "<chess>", "ch:w:e2", "ch:e4", "ch:b:e7", "ch:e5", "ch:w:g1", "ch:f3", "ch:b:b8", "ch:c6", "ch:w:f1", "ch:b5", "<eos>"], "game": "chess", "metadata": {"seat_count": 2, "view_type": "complete"}},
+        {"tokens": ["<bos>", "<chess>", "ch:w:e2", "ch:e4", "ch:b:c7", "ch:c5", "ch:w:g1", "ch:f3", "ch:b:d7", "ch:d6", "<eos>"], "game": "chess", "metadata": {"seat_count": 2, "view_type": "complete"}},
+        {"tokens": ["<bos>", "<shogi>", "sh:b:77", "sh:7f", "sh:w:33", "sh:3d", "sh:b:27", "sh:2f", "sh:w:83", "sh:8d", "<eos>"], "game": "shogi", "metadata": {"seat_count": 2, "view_type": "complete"}},
     ]
     analyze_dataset_stats(mock_dataset)

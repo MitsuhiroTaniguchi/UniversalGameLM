@@ -275,7 +275,7 @@ class PokerHandSimulator:
         # Flop betting round (if at least 2 active players left)
         if len(active_players) >= 2:
             flop = [deck.pop(), deck.pop(), deck.pop()]
-            public_tokens.extend(["pk:act:flop"] + [t for card in flop for t in ("pk:card", f"pk:{card[0]}", f"pk:{card[1]}")])
+            public_tokens.extend(["pk:act:flop"] + [f"pk:card:{card}" for card in flop])
             flop_ranks = {card[0] for card in flop}
             round_tokens, active_players = self._postflop_betting_round(
                 active_players,
@@ -289,7 +289,7 @@ class PokerHandSimulator:
         # Turn betting round
         if len(active_players) >= 2:
             turn = [deck.pop()]
-            public_tokens.extend(["pk:act:turn", "pk:card", f"pk:{turn[0][0]}", f"pk:{turn[0][1]}"])
+            public_tokens.extend(["pk:act:turn", f"pk:card:{turn[0]}"])
             turn_rank = turn[0][0]
             turn_bettor = next(
                 (seat for seat in active_players if any(card[0] == turn_rank for card in hands[seat])),
@@ -307,7 +307,7 @@ class PokerHandSimulator:
         # River betting round
         if len(active_players) >= 2:
             river = [deck.pop()]
-            public_tokens.extend(["pk:act:river", "pk:card", f"pk:{river[0][0]}", f"pk:{river[0][1]}"])
+            public_tokens.extend(["pk:act:river", f"pk:card:{river[0]}"])
             river_rank = river[0][0]
             river_bettor = next(
                 (seat for seat in active_players if any(card[0] == river_rank for card in hands[seat])),
@@ -330,7 +330,7 @@ class PokerHandSimulator:
             # Evaluate hands
             best_score = None
             for s in active_players:
-                public_tokens.extend([f"pk:showdown:p{s}", "pk:card", f"pk:{hands[s][0][0]}", f"pk:{hands[s][0][1]}", "pk:card", f"pk:{hands[s][1][0]}", f"pk:{hands[s][1][1]}"])
+                public_tokens.extend([f"pk:showdown:p{s}", f"pk:card:{hands[s][0]}", f"pk:card:{hands[s][1]}"])
                 score = self._score_key(self.get_best_hand(hands[s], flop + turn + river))
                 if best_score is None or score > best_score:
                     best_score = score
@@ -548,14 +548,14 @@ def _cards_token(cards):
 def _private_card_tokens(seat, cards):
     tokens = []
     for card in cards:
-        tokens.extend(["pk:private_card", f"pk:seat:p{seat}", f"pk:{card[0]}", f"pk:{card[1]}"])
+        tokens.extend(["pk:private_card", f"pk:seat:p{seat}", f"pk:card:{card}"])
     return tokens
 
 
 def _undealt_card_tokens(cards):
     tokens = []
     for card in cards:
-        tokens.extend(["pk:undealt_card", f"pk:{card[0]}", f"pk:{card[1]}"])
+        tokens.extend(["pk:undealt_card", f"pk:card:{card}"])
     return tokens
 
 
@@ -638,10 +638,10 @@ def _public_action_tokens(action):
             amount_tokens.extend(_number_digit_tokens("pk:amt", part))
         elif CARD_RE.fullmatch(part):
             normalized = _normalize_card(part)
-            card_tokens.extend(["pk:card", f"pk:{normalized[0]}", f"pk:{normalized[1]}"])
+            card_tokens.append(f"pk:card:{normalized}")
         elif CARD_RE.findall(part) and "".join(CARD_RE.findall(part)).lower() == part.lower():
             for card in _extract_cards(part):
-                card_tokens.extend(["pk:card", f"pk:{card[0]}", f"pk:{card[1]}"])
+                card_tokens.append(f"pk:card:{card}")
 
     action_token = None
     if "deal" in parts and "board" in parts:
@@ -691,7 +691,7 @@ def _public_action_tokens(action):
             tokens.extend(_number_digit_tokens("pk:amt", part))
         elif CARD_RE.fullmatch(part):
             normalized = _normalize_card(part)
-            tokens.extend(["pk:card", f"pk:{normalized[0]}", f"pk:{normalized[1]}"])
+            tokens.append(f"pk:card:{normalized}")
         elif part == "post" and index + 2 < len(parts) and parts[index + 1] in {"small", "big"} and parts[index + 2] == "blind":
             tokens.append(f"pk:act:post_{parts[index + 1]}_blind")
             index += 2

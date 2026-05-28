@@ -65,16 +65,14 @@ def validate_go_token_sequence(tokens):
             position_history = [_board_position_key(board)]
             i += 2
             continue
-        if token in ("go:b", "go:w"):
+        if token.startswith(("go:b:", "go:w:")):
             seen_setup = False
-            if i + 1 >= len(body):
-                raise ValueError("Move action without coordinate")
-            target = body[i + 1]
-            if target == "go:pass":
-                i += 2
+            parts = token.split(":", 2)
+            color = parts[1]
+            point = parts[2]
+            if point == "pass":
+                i += 1
                 continue
-            color = token.split(":", 1)[1]
-            point = target.split(":", 1)[1]
             row, col = token_to_coords(point, board_size)
             board.play(row, col, color)
             position_key = _board_position_key(board)
@@ -83,7 +81,7 @@ def validate_go_token_sequence(tokens):
             if not use_positional_superko and len(position_history) >= 2 and position_key == position_history[-2]:
                 raise ValueError("Go sequence violates simple ko")
             position_history.append(position_key)
-            i += 2
+            i += 1
             continue
         raise ValueError(f"Invalid Go token: {token}")
     return True
@@ -150,15 +148,15 @@ def parse_sgf_to_tokens(sgf_path):
             if move is not None and move[0] is not None:
                 color, coords = move
                 if coords is None:
-                    moves.extend([f"go:{color}", "go:pass"])
+                    moves.append(f"go:{color}:pass")
                 else:
                     row, col = coords
                     if not (0 <= row < board_size and 0 <= col < board_size):
                         raise ValueError(f"Move point out of range: {coords}")
-                    moves.extend([f"go:{color}", f"go:{coords_to_token(coords, board_size)}"])
+                    moves.append(f"go:{color}:{coords_to_token(coords, board_size)}")
 
         # Quality Filter: Skip empty or extremely short games
-        if len(moves) < 20:
+        if len(moves) < 10:
             return None, None
 
         context_tokens = [f"go:sz:{board_size}"]
@@ -179,7 +177,7 @@ def parse_sgf_to_tokens(sgf_path):
             "handicap": get_sgf_property(root, "HA", None),
             "rules": get_sgf_property(root, "RU", None),
             "setup_count": len(setup_tokens) // 2,
-            "move_count": len(moves) // 2,
+            "move_count": len(moves),
             "filename": os.path.basename(sgf_path),
             "source_path": str(Path(sgf_path).resolve()),
             "seat_count": 2,

@@ -107,12 +107,9 @@ class TestUniversalGameParsers(unittest.TestCase):
             self.assertEqual(tokens[0], "<bos>")
             self.assertEqual(tokens[1], "<go>")
             self.assertEqual(tokens[2], "go:sz:19")
-            self.assertEqual(tokens[3], "go:b")
-            self.assertEqual(tokens[4], "go:pd")
-            self.assertEqual(tokens[5], "go:w")
-            self.assertEqual(tokens[6], "go:dd")
-            self.assertEqual(tokens[7], "go:b")
-            self.assertEqual(tokens[8], "go:pp")
+            self.assertEqual(tokens[3], "go:b:pd")
+            self.assertEqual(tokens[4], "go:w:dd")
+            self.assertEqual(tokens[5], "go:b:pp")
             self.assertEqual(tokens[-1], "<eos>")
             self.assertEqual(meta["black"], "BlackPlayer")
             self.assertEqual(meta["white"], "WhitePlayer")
@@ -155,7 +152,7 @@ class TestUniversalGameParsers(unittest.TestCase):
             "<bos>", "<go>", "go:sz:5",
             "go:setup_b", "go:be", "go:setup_b", "go:ad", "go:setup_b", "go:bc",
             "go:setup_w", "go:bd", "go:setup_w", "go:ce", "go:setup_w", "go:dd", "go:setup_w", "go:cc",
-            "go:b", "go:cd", "go:w", "go:bd", "<eos>",
+            "go:b:cd", "go:w:bd", "<eos>",
         ]
         with self.assertRaises(ValueError):
             from src.go_parser import validate_go_token_sequence
@@ -790,11 +787,11 @@ HA H2 H7 H3
                     validate_entry({"game": "poker", "tokens": ["<bos>", "<poker>", token, "<eos>"]})
 
     def test_validate_entry_bounds_poker_imperfect_private_cards(self):
-        one_card = ["<bos>", "<poker>", "view:imperfect:1", "pk:private_card", "pk:seat:p1", "pk:A", "pk:h", "pk:seat:p1", "pk:act:fold", "<eos>"]
+        one_card = ["<bos>", "<poker>", "view:imperfect:1", "pk:private_card", "pk:seat:p1", "pk:card:Ah", "pk:seat:p1", "pk:act:fold", "<eos>"]
         validate_entry({"game": "poker", "tokens": one_card, "metadata": {"seat_count": 2, "view_type": "imperfect"}})
         too_many_cards = []
         for rank in "A23456789TJ":
-            too_many_cards.extend(["pk:private_card", "pk:seat:p1", f"pk:{rank}", "pk:h"])
+            too_many_cards.extend(["pk:private_card", "pk:seat:p1", f"pk:card:{rank}h"])
         too_many = ["<bos>", "<poker>", "view:imperfect:1"] + too_many_cards + ["pk:seat:p1", "pk:act:fold", "<eos>"]
         with self.assertRaises(ProductionDatasetError):
             validate_entry({"game": "poker", "tokens": too_many, "metadata": {"seat_count": 2, "view_type": "imperfect"}})
@@ -989,7 +986,7 @@ actions = [
             self.assertNotIn("pk:act:cbr", complete_tokens)
             self.assertIn("pk:amt:3", complete_tokens)
             self.assertIn("pk:act:deal_board", complete_tokens)
-            self.assertIn("pk:card", complete_tokens)
+            self.assertTrue(any(t.startswith("pk:card:") for t in complete_tokens))
             self.assertIn("pk:act:hidden", complete_tokens)
             self.assertFalse(any("AhAd" in token or "KcKd" in token for token in complete_tokens))
             self.assertEqual(complete_meta["private_actions_excluded"], 2)
@@ -1019,7 +1016,7 @@ actions = [
             complete_tokens = hands[0][0]
             self.assertIn("pk:seat:p1", complete_tokens)
             self.assertIn("pk:act:show", complete_tokens)
-            self.assertIn("pk:card", complete_tokens)
+            self.assertTrue(any(t.startswith("pk:card:") for t in complete_tokens))
         finally:
             os.remove(temp_path)
 
@@ -1069,7 +1066,7 @@ actions = [
         self.assertFalse(is_counted_move_token("pk:ANTE_TRIMMING_STATUS:false"))
         self.assertFalse(is_counted_move_token("pk:BETTING_TYPE:no_limit"))
         self.assertFalse(is_counted_move_token("pk:seat:p1"))
-        self.assertFalse(is_counted_move_token("pk:card"))
+        self.assertFalse(is_counted_move_token("pk:card:Ah"))
         self.assertFalse(is_counted_move_token("pk:showdown:p1"))
         self.assertFalse(is_counted_move_token("pk:winner:p1"))
         self.assertFalse(is_counted_move_token("pk:act:flop"))
@@ -1086,18 +1083,16 @@ actions = [
         self.assertFalse(is_counted_move_token("sh:+"))
         self.assertFalse(is_counted_move_token("go:pd"))
         self.assertFalse(is_counted_move_token("go:pass"))
-        self.assertFalse(is_counted_move_token("br:A"))
-        self.assertFalse(is_counted_move_token("br:h"))
+        self.assertFalse(is_counted_move_token("br:card:Ah"))
+        self.assertFalse(is_counted_move_token("br:card:Ks"))
         self.assertFalse(is_counted_move_token("br:bid:N"))
-        self.assertFalse(is_counted_move_token("pk:A"))
-        self.assertFalse(is_counted_move_token("pk:h"))
         # Action-initiator tokens count as moves
         self.assertTrue(is_counted_move_token("ch:w:e2"))
         self.assertTrue(is_counted_move_token("ch:b:e7"))
         self.assertTrue(is_counted_move_token("sh:b:7g"))
         self.assertTrue(is_counted_move_token("sh:w:3c"))
-        self.assertTrue(is_counted_move_token("go:b"))
-        self.assertTrue(is_counted_move_token("go:w"))
+        self.assertTrue(is_counted_move_token("go:b:pd"))
+        self.assertTrue(is_counted_move_token("go:w:dd"))
         self.assertTrue(is_counted_move_token("br:play:S"))
         self.assertTrue(is_counted_move_token("br:bid:1N"))
         self.assertTrue(is_counted_move_token("br:bid:PASS"))
@@ -1211,8 +1206,7 @@ HA H9 H5 H2
             validate_entry({"game": "bridge", "tokens": imperfect_tokens, "metadata": imperfect_meta})
             bad_tokens = list(imperfect_tokens)
             play_idx = bad_tokens.index("br:play:S")
-            bad_tokens[play_idx + 1] = "br:K"
-            bad_tokens[play_idx + 2] = "br:s"
+            bad_tokens[play_idx + 1] = "br:card:Ks"
             with self.assertRaises(ProductionDatasetError):
                 validate_entry({"game": "bridge", "tokens": bad_tokens, "metadata": imperfect_meta})
         finally:
@@ -1312,7 +1306,7 @@ actions = [
             cache_path = os.path.join(temp_dir, "cache.jsonl")
             rows = [
                 {"game": "poker", "tokens": ["<bos>", "<poker>", "view:complete", "pk:seat:p1", "pk:act:fold", "<eos>"], "metadata": {"seat_count": 2, "view_type": "complete"}},
-                {"game": "poker", "tokens": ["<bos>", "<poker>", "view:imperfect:1", "pk:private_card", "pk:seat:p1", "pk:A", "pk:h", "pk:seat:p1", "pk:act:fold", "<eos>"], "metadata": {"seat_count": 2, "view_type": "imperfect", "viewer_seat": 1}},
+                {"game": "poker", "tokens": ["<bos>", "<poker>", "view:imperfect:1", "pk:private_card", "pk:seat:p1", "pk:card:Ah", "pk:seat:p1", "pk:act:fold", "<eos>"], "metadata": {"seat_count": 2, "view_type": "imperfect", "viewer_seat": 1}},
                 {"game": "poker", "tokens": ["<bos>", "<poker>", "view:complete", "pk:seat:p2", "pk:act:fold", "<eos>"], "metadata": {"seat_count": 2, "view_type": "complete"}},
             ]
             with open(cache_path, "w", encoding="utf-8") as f:
@@ -1540,6 +1534,49 @@ T1
                 "chess",
                 "Raw Lichess standard rated games",
             )
+
+    def test_source_catalog_license_verified_field(self):
+        catalog_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "source_catalog.json")
+        catalog = load_source_catalog(catalog_path)
+        for game, sources in catalog["games"].items():
+            for source in sources:
+                self.assertIn("license_verified", source, f"{game}: {source['name']} missing license_verified")
+                self.assertIsInstance(source["license_verified"], bool, source["name"])
+
+    def test_source_catalog_rejects_unverified_license(self):
+        catalog = {
+            "games": {
+                "chess": [
+                    {
+                        "name": "Unverified Source",
+                        "source_class": "engine_top",
+                        "quality_tier": "primary_3b",
+                        "license": "unknown",
+                        "license_verified": False,
+                    }
+                ]
+            }
+        }
+        with self.assertRaises(ProductionDatasetError):
+            assert_source_allowed_for_primary_build(catalog, "chess", "Unverified Source")
+
+    def test_build_game_shards_rejects_unknown_source_id(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            chess_path = os.path.join(temp_dir, "sample.pgn")
+            with open(chess_path, "w", encoding="utf-8") as f:
+                f.write('[Event "Sample"]\n[White "A"]\n[Black "B"]\n[Result "1-0"]\n\n1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 4. Ba4 *')
+            out_dir = os.path.join(temp_dir, "out")
+            with self.assertRaises(ProductionDatasetError):
+                build_game_shards(
+                    "chess", [chess_path], out_dir,
+                    target_tokens=4, max_records=1,
+                    allowed_source_ids={"bogus_id"},
+                )
+
+    def test_build_game_shards_tokenizer_fingerprint_consistency(self):
+        result = build_game_shards.__code__.co_varnames
+        self.assertIn("tokenizer_fingerprint", result)
+        self.assertIn("allowed_source_ids", result)
 
 if __name__ == "__main__":
     unittest.main()
