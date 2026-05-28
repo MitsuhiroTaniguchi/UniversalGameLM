@@ -582,6 +582,24 @@ class JsonlShardWriter:
         return self._close_current()
 
 
+def entry_to_unified_row(entry, tokenizer):
+    """Convert an entry to unified-vocab row with ``input_ids``."""
+    from src.mahjonglm_compat import tokens_to_mahjonglm_stream
+    stream_tokens = tokens_to_mahjonglm_stream(entry)
+    ids = tokenizer.encode_strict(stream_tokens)
+    metadata = entry.get("metadata") or {}
+    return {
+        "game_id": metadata.get("game_id") or "",
+        "year": metadata.get("year"),
+        "seat_count": int(metadata.get("seat_count") or 2),
+        "view_type": metadata.get("view_type") or "complete",
+        "viewer_seat": metadata.get("viewer_seat"),
+        "length": len(ids),
+        "input_ids": ids,
+        "tokenizer_fingerprint": tokenizer.fingerprint(),
+    }
+
+
 def build_game_shards(
     game,
     input_paths,
@@ -598,10 +616,10 @@ def build_game_shards(
     tokenizer_fingerprint=None,
     allowed_source_ids=None,
 ):
-    if output_format not in {"universal_jsonl", "mahjonglm_jsonl"}:
+    if output_format not in {"universal_jsonl", "unified_jsonl", "mahjonglm_jsonl"}:
         raise ValueError(f"Unsupported output_format: {output_format}")
-    if output_format == "mahjonglm_jsonl" and tokenizer is None:
-        raise ValueError("mahjonglm_jsonl output requires a tokenizer")
+    if output_format in ("mahjonglm_jsonl", "unified_jsonl") and tokenizer is None:
+        raise ValueError(f"{output_format} output requires a tokenizer")
 
     effective_fingerprint = tokenizer_fingerprint
     if tokenizer is not None:
@@ -615,6 +633,8 @@ def build_game_shards(
     row_transform = None
     if output_format == "mahjonglm_jsonl":
         row_transform = lambda entry: entry_to_mahjonglm_row(entry, tokenizer)
+    elif output_format == "unified_jsonl":
+        row_transform = lambda entry: entry_to_unified_row(entry, tokenizer)
 
     writer = JsonlShardWriter(
         output_dir,

@@ -132,6 +132,44 @@ class UniversalGameTokenizer:
         ]
         return instance
 
+    @classmethod
+    def from_universal_vocab(cls, vocab_path=None):
+        """
+        Loads the unified universal vocabulary (vocab/universal.txt or .json).
+
+        All game tokens are pre-registered. Game marker special tokens
+        (``<chess>``, ``<shogi>``, etc.) are NOT in the universal vocab
+        file — use :meth:`add_tokens` or :meth:`_register_token` to add
+        them before encoding.
+        """
+        import json as _json
+        from pathlib import Path as _Path
+
+        if vocab_path is None:
+            vocab_path = _Path(__file__).parent.parent / "vocab" / "universal.json"
+        else:
+            vocab_path = _Path(vocab_path)
+
+        instance = cls(special_tokens=[])
+
+        if vocab_path.suffix == ".json":
+            with open(vocab_path, "r", encoding="utf-8") as f:
+                raw = _json.load(f)
+            instance.vocab = {token: int(idx) for token, idx in raw.items()}
+        elif vocab_path.suffix == ".txt":
+            with open(vocab_path, "r", encoding="utf-8") as f:
+                instance.vocab = {line.rstrip("\n"): idx for idx, line in enumerate(f)}
+        else:
+            raise ValueError(f"Unsupported vocab format: {vocab_path}")
+
+        instance.inv_vocab = {int(idx): token for token, idx in instance.vocab.items()}
+        instance._validate_vocab_ids()
+        instance.special_tokens = [
+            token for token in instance.vocab
+            if token.startswith("<") and token.endswith(">")
+        ]
+        return instance
+
     def add_tokens(self, tokens):
         added = 0
         for token in tokens:
