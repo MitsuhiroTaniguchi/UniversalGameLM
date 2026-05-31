@@ -12,7 +12,7 @@ from src.production_pipeline import (
     build_game_shards,
     load_source_catalog,
     maybe_hf_uploader,
-    source_id_for_path,
+    move_token_count_for_entry,
 )
 from src.tokenizer import UniversalGameTokenizer
 
@@ -44,22 +44,23 @@ def main():
             raise RuntimeError("--source-name must be provided once or once per --input")
         catalog = load_source_catalog(args.source_catalog)
         names = args.source_name if len(args.source_name) == len(args.input) else args.source_name * len(args.input)
+        source_catalog_entries = []
         for name in names:
-            assert_source_allowed_for_primary_build(
+            source_catalog_entries.append(assert_source_allowed_for_primary_build(
                 catalog,
                 args.game,
                 name,
                 allow_fallback=args.allow_fallback_source,
-            )
+            ))
+        allowed_source_paths = args.input
     elif args.max_records is None and args.target_tokens >= DEFAULT_TARGET_TOKENS:
         raise RuntimeError(
             "Production 3B-token builds require --source-name so the catalog quality gate can reject low-quality sources. "
             "Use --source-name with a source_catalog.json entry, or set --max-records for local smoke tests."
         )
-
-    allowed_source_ids = None
-    if args.source_name:
-        allowed_source_ids = {source_id_for_path(p) for p in args.input}
+    else:
+        source_catalog_entries = None
+        allowed_source_paths = None
 
     tokenizer = None
     cached_entries_path = None
@@ -68,7 +69,6 @@ def main():
             raise RuntimeError("--mahjonglm-tokenizer-dir is required for mahjonglm_jsonl output")
         tokenizer = UniversalGameTokenizer.from_mahjonglm_assets(args.mahjonglm_tokenizer_dir)
         from src.mahjonglm_compat import collect_tokens_for_mahjonglm
-        from src.mahjonglm_compat import entry_to_mahjonglm_row_tokens
         from src.production_pipeline import iter_game_entries
 
         cache_file = tempfile.NamedTemporaryFile(
@@ -88,7 +88,7 @@ def main():
                     break
                 tokenizer.add_tokens(collect_tokens_for_mahjonglm([entry]))
                 cache_file.write(json.dumps(entry, ensure_ascii=False) + "\n")
-                cached_tokens += len(entry_to_mahjonglm_row_tokens(entry))
+                cached_tokens += move_token_count_for_entry(entry)
         cache_file.close()
         if args.tokenizer_output_dir:
             tokenizer.save_mahjonglm_assets(args.tokenizer_output_dir)
@@ -109,7 +109,8 @@ def main():
                 output_format=args.output_format,
                 tokenizer=tokenizer,
                 cached_entries_path=cached_entries_path,
-                allowed_source_ids=allowed_source_ids,
+                allowed_source_paths=allowed_source_paths,
+                source_catalog_entries=source_catalog_entries,
             )
     finally:
         if cached_entries_path:

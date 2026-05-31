@@ -114,6 +114,9 @@ def validate_shogi_token_sequence(tokens):
         if token.startswith("sh:end:"):
             i += 1
             continue
+        if token.startswith(("sh:result:", "sh:move:")):
+            i += 1
+            continue
         # Expect a move-origin token: sh:{color}:{src_or_piece}
         m = re.fullmatch(r"sh:[bw]:(.+)", token)
         if not m:
@@ -181,6 +184,7 @@ def parse_csa_to_tokens(csa_path):
             is_black_turn = any(t == "sh:turn:black" for t in setup)
 
         move_tokens = []
+        board_for_aux = cshogi.Board()
         for m in parser.moves:
             usi = cshogi.move_to_usi(m)
             color = "b" if is_black_turn else "w"
@@ -197,16 +201,24 @@ def parse_csa_to_tokens(csa_path):
                 move_tokens.append(f"sh:{dest}")
                 if usi.endswith("+"):
                     move_tokens.append("sh:promote")
+            board_for_aux.push(m)
+            if hasattr(board_for_aux, "is_check") and board_for_aux.is_check():
+                move_tokens.append("sh:move:check")
             is_black_turn = not is_black_turn
 
-        tokens = ["<bos>", "<shogi>"] + setup + move_tokens + [f"sh:end:{terminal_reason}", "<eos>"]
-        
         # Determine winner
         winner = "Draw"
         if parser.win == cshogi.BLACK_WIN:
             winner = "Black"
         elif parser.win == cshogi.WHITE_WIN:
             winner = "White"
+        result_token = {
+            "Black": "sh:result:black_win",
+            "White": "sh:result:white_win",
+            "Draw": "sh:result:draw",
+        }[winner]
+
+        tokens = ["<bos>", "<shogi>"] + setup + move_tokens + [result_token, f"sh:end:{terminal_reason}", "<eos>"]
 
         metadata = {
             "black": parser.names[0] if len(parser.names) > 0 else "Unknown",

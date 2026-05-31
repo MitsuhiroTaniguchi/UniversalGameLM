@@ -401,3 +401,17 @@ ch:rule:variant:kingofthehill
 ch:rule:variant:racingkings
 ch:rule:variant:standard
 ch:rule:variant:suicide
+ch:move:capture
+ch:move:check
+ch:move:checkmate
+ch:result:white_win
+ch:result:black_win
+ch:result:draw
+ch:result:unknown
+ch:end:checkmate
+ch:end:stalemate
+ch:end:insufficient_material
+ch:end:repetition
+ch:end:fifty_moves
+ch:end:result
+ch:end:unknown

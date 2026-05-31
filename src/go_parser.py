@@ -46,7 +46,7 @@ def validate_go_token_sequence(tokens):
     i = 0
     while i < len(body):
         token = body[i]
-        if token.startswith(("go:km:", "go:ru:", "go:ha:")):
+        if token.startswith(("go:km:", "go:ru:", "go:ha:", "go:result:", "go:end:", "go:score:", "go:num:", "go:move:")):
             i += 1
             continue
         if token in ("go:setup_b", "go:setup_w", "go:setup_e"):
@@ -92,6 +92,45 @@ def _coarse_tree_has_variations(tree):
     if len(children) > 1:
         return True
     return any(_coarse_tree_has_variations(child) for child in children)
+
+
+def _result_tokens(result):
+    if result in (None, "Unknown", "", "*"):
+        return ["go:result:unknown", "go:end:unknown"]
+    value = str(result).strip()
+    lower = value.lower().replace(" ", "_")
+    winner = "black" if lower.startswith("b+") else "white" if lower.startswith("w+") else "unknown"
+    end = "unknown"
+    score = None
+    if "+" in lower:
+        suffix = lower.split("+", 1)[1]
+        if suffix in {"r", "resign"}:
+            end = "resign"
+        elif suffix in {"t", "time"}:
+            end = "time"
+        elif suffix in {"f", "forfeit"}:
+            end = "forfeit"
+        else:
+            end = "points"
+            score = suffix
+    tokens = [f"go:result:{winner}_win", f"go:end:{end}"]
+    if score:
+        tokens.extend(_numeric_value_tokens("go:score", "go:num", score))
+    return tokens
+
+
+def _numeric_value_tokens(field_prefix, digit_prefix, value):
+    pieces = []
+    for char in str(value).strip():
+        if char.isdigit():
+            pieces.append(f"{digit_prefix}:{char}")
+        elif char == ".":
+            pieces.append(f"{digit_prefix}:dot")
+        elif char in "+-":
+            pieces.append(f"{digit_prefix}:{'plus' if char == '+' else 'neg'}")
+        else:
+            return []
+    return [f"{field_prefix}:BEGIN"] + pieces + [f"{field_prefix}:END"] if pieces else []
 
 def parse_sgf_to_tokens(sgf_path):
     """
@@ -164,7 +203,8 @@ def parse_sgf_to_tokens(sgf_path):
             value = get_sgf_property(root, prop, None)
             if value not in (None, "Unknown", ""):
                 context_tokens.append(f"go:{prefix}:{str(value).lower().replace(' ', '_')}")
-        tokens = ["<bos>", "<go>"] + context_tokens + setup_tokens + moves + ["<eos>"]
+        result = get_sgf_property(root, "RE", "*")
+        tokens = ["<bos>", "<go>"] + context_tokens + setup_tokens + moves + _result_tokens(result) + ["<eos>"]
         validate_go_token_sequence(tokens)
 
         metadata = {

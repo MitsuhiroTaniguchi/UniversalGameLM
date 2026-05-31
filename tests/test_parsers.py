@@ -197,7 +197,9 @@ class TestUniversalGameParsers(unittest.TestCase):
             tokens, meta = games[0]
             self.assertEqual(tokens[0], "<bos>")
             self.assertEqual(tokens[1], "<othello>")
-            self.assertEqual(tokens[2:6], ["ot:b:d3", "ot:w:c3", "ot:b:b3", "ot:w:b2"])
+            self.assertEqual([token for token in tokens[2:] if re.fullmatch(r"ot:[bw]:.+", token)][:4], ["ot:b:d3", "ot:w:c3", "ot:b:b3", "ot:w:b2"])
+            self.assertIn("ot:flip:1", tokens)
+            self.assertIn("ot:result:white_win", tokens)
             self.assertEqual(tokens[-1], "<eos>")
             self.assertEqual(meta["black"], "PlayerB")
         finally:
@@ -280,6 +282,7 @@ class TestUniversalGameParsers(unittest.TestCase):
         self.assertEqual(tokens[0], "<bos>")
         self.assertEqual(tokens[1], "<poker>")
         self.assertEqual(tokens[2], "view:complete")
+        self.assertEqual(tokens[3], "pk:rule:player:6")
         self.assertEqual(tokens[-1], "<eos>")
         self.assertFalse(any(t.startswith("H:") for t in tokens))
         self.assertFalse(any(re.search(r"[br]\d+", t) for t in tokens))
@@ -463,6 +466,7 @@ class TestUniversalGameParsers(unittest.TestCase):
             "game": "poker",
             "tokens": [
                 "<bos>", "<poker>", "view:complete",
+                "pk:rule:player:2",
                 "pk:seat:p1", "pk:act:post_ante", "pk:amt:1", "pk:amt:0",
                 "pk:seat:p2", "pk:act:post_ante", "pk:amt:1", "pk:amt:0",
                 "pk:seat:p1", "pk:act:raise", "pk:amt:6", "pk:amt:0",
@@ -471,11 +475,26 @@ class TestUniversalGameParsers(unittest.TestCase):
             "metadata": {"seat_count": 2, "view_type": "complete"},
         })
 
+    def test_validate_entry_rejects_poker_player_rule_mismatch(self):
+        with self.assertRaises(ProductionDatasetError):
+            validate_entry({
+                "game": "poker",
+                "tokens": [
+                    "<bos>", "<poker>", "view:complete",
+                    "pk:rule:player:6",
+                    "pk:seat:p1", "pk:act:post_blind", "pk:amt:2", "pk:amt:0",
+                    "pk:seat:p2", "pk:act:fold",
+                    "<eos>",
+                ],
+                "metadata": {"seat_count": 2, "view_type": "complete"},
+            })
+
     def test_validate_entry_accepts_amount_token_immediately_before_eos(self):
         validate_entry({
             "game": "poker",
             "tokens": [
                 "<bos>", "<poker>", "view:complete",
+                "pk:rule:player:2",
                 "pk:seat:p1", "pk:act:post_blind", "pk:amt:2", "pk:amt:0",
                 "pk:seat:p2", "pk:act:raise", "pk:amt:6", "pk:amt:0",
                 "<eos>",
@@ -542,6 +561,29 @@ HA H9 H5 H2
             rows = list(parse_bridge_inputs(temp_path, max_games=2))
             self.assertEqual(len(rows), 12)
             self.assertEqual(len({meta["view_group_id"] for _, meta in rows}), 2)
+        finally:
+            os.remove(temp_path)
+
+    def test_bridge_pbn_parser_splits_repeated_boards_without_event_tag(self):
+        board = """[Event "Same Event"]
+[Board "{board}"]
+[Dealer "N"]
+[Vulnerable "None"]
+[Deal "N:AKQJ.543.2.98765 T987.2.AKQJ.T432 6543.AKQJ.43.AKQ 2.T9876.T98765.J"]
+[Auction "N"]
+1NT Pass 3NT Pass Pass Pass
+[Play "S"]
+HA H9 H5 H2
+"""
+        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".pbn") as f:
+            f.write(board.format(board=1) + "\n")
+            f.write(board.format(board=2).replace('[Event "Same Event"]\n', ""))
+            temp_path = f.name
+        try:
+            rows = list(parse_pbn_to_tokens(temp_path))
+            self.assertEqual(len(rows), 12)
+            self.assertEqual(len({meta["view_group_id"] for _, meta in rows}), 2)
+            self.assertEqual([meta["board"] for _, meta in rows if meta["view_type"] == "complete"], ["1", "2"])
         finally:
             os.remove(temp_path)
 
@@ -734,7 +776,7 @@ HA H2 H7 H3
             os.makedirs(go_dir)
             go_path = os.path.join(go_dir, "sample.sgf")
             with open(go_path, "w", encoding="utf-8") as f:
-                f.write("(;PB[Black]PW[White]RE[B+R];B[pd];W[dd];B[pp];W[dp];B[cf];W[ch];B[fd];W[df];B[dg];W[cg])")
+                f.write("(;PB[Black]PW[White]RE[B+12.5];B[pd];W[dd];B[pp];W[dp];B[cf];W[ch];B[fd];W[df];B[dg];W[cg])")
 
             othello_path = os.path.join(temp_dir, "sample_othello.pgn")
             with open(othello_path, "w", encoding="utf-8") as f:
@@ -746,7 +788,7 @@ HA H2 H7 H3
 
             bridge_path = os.path.join(temp_dir, "sample.pbn")
             with open(bridge_path, "w", encoding="utf-8") as f:
-                f.write("""[Event "Bridge"]\n[Date "2025.01.02"]\n[Dealer "N"]\n[Vulnerable "None"]\n[Deal "N:AKQJ.543.2.98765 T987.2.AKQJ.T432 6543.AKQJ.43.AKQ 2.T9876.T98765.J"]\n[Auction "N"]\n1NT Pass 3NT Pass Pass Pass\n[Play "S"]\nHA H9 H5 H2\n""")
+                f.write("""[Event "Bridge"]\n[Date "2025.01.02"]\n[Dealer "N"]\n[Vulnerable "None"]\n[Result "10"]\n[Score "NS 420"]\n[Deal "N:AKQJ.543.2.98765 T987.2.AKQJ.T432 6543.AKQJ.43.AKQ 2.T9876.T98765.J"]\n[Auction "N"]\n1NT Pass 3NT Pass Pass Pass\n[Play "S"]\nHA H9 H5 H2\n""")
 
             cases = {
                 "chess": [chess_path],
@@ -776,6 +818,14 @@ HA H2 H7 H3
                 self.assertEqual(entry["game"], game)
                 if game == "poker":
                     self.assertFalse(any("deal_hole" in token for token in entry["tokens"]))
+                if game == "go":
+                    self.assertIn("go:score:BEGIN", entry["tokens"])
+                    self.assertIn("go:num:dot", entry["tokens"])
+                    self.assertNotIn("go:score:12.5", entry["tokens"])
+                if game == "bridge":
+                    self.assertIn("br:result:BEGIN", entry["tokens"])
+                    self.assertIn("br:score:side:NS", entry["tokens"])
+                    self.assertNotIn("br:score:NS_420", entry["tokens"])
 
     def test_validate_entry_rejects_private_poker_tokens(self):
         private_tokens = [
@@ -815,6 +865,13 @@ HA H2 H7 H3
             self.assertNotIn("deal_hole_p1_ahad", tokens)
             self.assertEqual(tokens[2:], [
                 "view:complete",
+                "pk:rule:player:2",
+                "pk:summary:players:2",
+                "pk:summary:private_observed:1",
+                "pk:summary:missing_private:1",
+                "pk:summary:omniscient_available:0",
+                "pk:state:observed_contribution_sum:BEGIN", "pk:num:5", "pk:num:0", "pk:state:observed_contribution_sum:END",
+                "pk:state:observed_contribution_sum:BEGIN", "pk:num:1", "pk:num:5", "pk:num:0", "pk:state:observed_contribution_sum:END",
                 "pk:seat:p1", "pk:act:post_blind", "pk:amt:5", "pk:amt:0",
                 "pk:seat:p2", "pk:act:post_blind", "pk:amt:1", "pk:amt:0", "pk:amt:0",
                 "pk:seat:p1", "pk:act:call",
@@ -981,6 +1038,7 @@ actions = [
             imperfect = {(meta["viewer_seat"]): (tokens, meta) for tokens, meta in hands if meta["view_type"] == "imperfect"}
             complete_tokens, complete_meta = views["complete"]
             self.assertEqual(complete_meta["seat_count"], 2)
+            self.assertEqual(complete_tokens[3], "pk:rule:player:2")
             self.assertEqual(complete_meta["view_rows_per_hand"], 4)
             self.assertEqual(complete_meta["move_count"], poker_action_count(complete_tokens))
             self.assertIn("view:complete", complete_tokens)
@@ -1051,6 +1109,7 @@ actions = [
             hands = list(parse_phh_to_tokens(temp_path))
             self.assertEqual(len(hands), 8)
             self.assertTrue(all(meta["seat_count"] == 6 for _, meta in hands))
+            self.assertTrue(all(tokens[3] == "pk:rule:player:6" for tokens, _ in hands))
             self.assertTrue(all(meta["view_rows_per_hand"] == 8 for _, meta in hands))
 
             stats = DatasetStatsAccumulator()
@@ -1071,6 +1130,7 @@ actions = [
         self.assertFalse(is_counted_move_token("pk:amt:5"))
         self.assertFalse(is_counted_move_token("pk:ANTE_TRIMMING_STATUS:false"))
         self.assertFalse(is_counted_move_token("pk:BETTING_TYPE:no_limit"))
+        self.assertFalse(is_counted_move_token("pk:rule:player:6"))
         self.assertFalse(is_counted_move_token("pk:seat:p1"))
         self.assertFalse(is_counted_move_token("pk:card:Ah"))
         self.assertFalse(is_counted_move_token("pk:showdown:p1"))
@@ -1346,6 +1406,7 @@ actions = [
                 "ch:fen:turn:w", "ch:fen:castle:KQkq", "ch:fen:ep:-",
                 "ch:w:e2", "ch:e4", "ch:b:e7", "ch:e5", "ch:w:g1", "ch:f3",
                 "ch:b:b8", "ch:c6", "ch:w:f1", "ch:b5", "ch:b:a7", "ch:a6", "ch:w:b5", "ch:a4",
+                "ch:result:white_win", "ch:end:result",
             ]
             with open(os.path.join(tokenizer_dir, "vocab.txt"), "w", encoding="utf-8") as f:
                 f.write("\n".join(vocab_tokens) + "\n")
@@ -1589,10 +1650,70 @@ T1
                     allowed_source_ids={"bogus_id"},
                 )
 
+    def test_build_game_shards_allows_catalog_checked_directory_sources(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            input_dir = os.path.join(temp_dir, "inputs")
+            os.makedirs(input_dir)
+            chess_path = os.path.join(input_dir, "sample.pgn")
+            with open(chess_path, "w", encoding="utf-8") as f:
+                f.write('[Event "Sample"]\n[White "A"]\n[Black "B"]\n[Result "1-0"]\n\n1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 4. Ba4 *')
+            out_dir = os.path.join(temp_dir, "out")
+            result = build_game_shards(
+                "chess", [input_dir], out_dir,
+                target_tokens=4, max_records=1,
+                allowed_source_paths=[input_dir],
+            )
+            self.assertEqual(result["status"], "ready")
+            self.assertEqual(result["rows"], 1)
+
+    def test_build_game_shards_injects_catalog_source_metadata(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            chess_path = os.path.join(temp_dir, "sample.pgn")
+            with open(chess_path, "w", encoding="utf-8") as f:
+                f.write('[Event "Sample"]\n[White "A"]\n[Black "B"]\n[Result "1-0"]\n\n1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 4. Ba4 *')
+            out_dir = os.path.join(temp_dir, "out")
+            result = build_game_shards(
+                "chess", [chess_path], out_dir,
+                target_tokens=4, max_records=1,
+                source_catalog_entries=[{
+                    "name": "Stockfish fishtest LTC PGNs",
+                    "source_class": "engine_top",
+                    "quality_tier": "primary_3b",
+                    "license": "GPL-compatible",
+                    "license_verified": True,
+                    "priority": 1,
+                }],
+            )
+            shard_path = result["shards"][0]["path"]
+            with gzip.open(shard_path, "rt", encoding="utf-8") as f:
+                row = json.loads(f.readline())
+            metadata = row["metadata"]
+            self.assertEqual(metadata["source_name"], "Stockfish fishtest LTC PGNs")
+            self.assertEqual(metadata["catalog_source_class"], "engine_top")
+            self.assertEqual(metadata["catalog_quality_tier"], "primary_3b")
+
+    def test_build_game_shards_targets_move_tokens_not_serialized_tokens(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            chess_path = os.path.join(temp_dir, "sample.pgn")
+            with open(chess_path, "w", encoding="utf-8") as f:
+                f.write('[Event "Sample"]\n[White "A"]\n[Black "B"]\n[Result "1-0"]\n\n1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 4. Ba4 *')
+            out_dir = os.path.join(temp_dir, "out")
+            result = build_game_shards("chess", [chess_path], out_dir, target_tokens=8, max_records=1)
+            self.assertEqual(result["status"], "insufficient")
+            self.assertEqual(result["move_tokens"], 7)
+            self.assertEqual(result["tokens"], 7)
+            self.assertGreater(result["serialized_tokens"], result["tokens"])
+            self.assertIn("serialized_tokens", result["shards"][0])
+            self.assertEqual(result["stats"]["move_tokens"], result["tokens"])
+            self.assertEqual(result["stats"]["serialized_tokens"], result["serialized_tokens"])
+            self.assertEqual(result["stats"]["token_deficit"], 1)
+
     def test_build_game_shards_tokenizer_fingerprint_consistency(self):
         result = build_game_shards.__code__.co_varnames
         self.assertIn("tokenizer_fingerprint", result)
         self.assertIn("allowed_source_ids", result)
+        self.assertIn("allowed_source_paths", result)
+        self.assertIn("source_catalog_entries", result)
 
 if __name__ == "__main__":
     unittest.main()

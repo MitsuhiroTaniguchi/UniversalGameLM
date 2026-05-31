@@ -78,6 +78,32 @@ def _game_context_tokens(game):
     tokens.extend(_fen_tokens(fen))
     return tokens
 
+
+def _result_token(result):
+    normalized = {
+        "1-0": "white_win",
+        "0-1": "black_win",
+        "1/2-1/2": "draw",
+        "*": "unknown",
+    }.get(result, str(result).replace("/", "_").replace("-", "_"))
+    return f"ch:result:{normalized}"
+
+
+def _end_token(board, result):
+    if board.is_checkmate():
+        return "ch:end:checkmate"
+    if board.is_stalemate():
+        return "ch:end:stalemate"
+    if board.is_insufficient_material():
+        return "ch:end:insufficient_material"
+    if board.can_claim_threefold_repetition() or board.is_repetition():
+        return "ch:end:repetition"
+    if board.can_claim_fifty_moves() or board.is_fifty_moves():
+        return "ch:end:fifty_moves"
+    if result in {"1-0", "0-1", "1/2-1/2"}:
+        return "ch:end:result"
+    return "ch:end:unknown"
+
 def parse_pgn_to_tokens(pgn_path, max_games=None):
     """
     Parses a Chess PGN file and yields token sequences for each game.
@@ -113,6 +139,7 @@ def parse_pgn_to_tokens(pgn_path, max_games=None):
                     legal = False
                     break
                 color = "w" if board.turn == chess.WHITE else "b"
+                is_capture = board.is_capture(move)
                 uci = move.uci()
                 src = uci[:2]
                 dst = uci[2:4]
@@ -122,6 +149,12 @@ def parse_pgn_to_tokens(pgn_path, max_games=None):
                 if promo:
                     tokens.append(f"ch:={promo}")
                 board.push(move)
+                if is_capture:
+                    tokens.append("ch:move:capture")
+                if board.is_checkmate():
+                    tokens.append("ch:move:checkmate")
+                elif board.is_check():
+                    tokens.append("ch:move:check")
                 move_count += 1
             if not legal:
                 continue
@@ -130,7 +163,8 @@ def parse_pgn_to_tokens(pgn_path, max_games=None):
             if move_count < 4:
                 continue
 
-            tokens.append("<eos>")
+            result = game.headers.get("Result", "*")
+            tokens.extend([_result_token(result), _end_token(board, result), "<eos>"])
 
             games_parsed += 1
             

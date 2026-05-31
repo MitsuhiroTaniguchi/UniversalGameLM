@@ -118,7 +118,9 @@ def build_manifest(stats_summary, target_tokens_per_game):
         coverage = item["coverage"] or 0
         games[game] = {
             "games": item["games"],
-            "tokens": item["tokens"],
+            "move_tokens": item["move_tokens"],
+            "serialized_tokens": item["serialized_tokens"],
+            "tokens": item["move_tokens"],
             "target_tokens": item["target_tokens"],
             "token_deficit": item["token_deficit"],
             "coverage": coverage,
@@ -129,6 +131,8 @@ def build_manifest(stats_summary, target_tokens_per_game):
     for game in missing_games:
         games[game] = {
             "games": 0,
+            "move_tokens": 0,
+            "serialized_tokens": 0,
             "tokens": 0,
             "target_tokens": target_tokens_per_game,
             "token_deficit": target_tokens_per_game,

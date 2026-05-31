@@ -221,6 +221,40 @@ def _trick_winner(trick, led_suit, trump_suit=None):
     return min(candidates, key=lambda item: RANKS.index(item[1][0]))[0]
 
 
+def _numeric_value_tokens(field_prefix, digit_prefix, value):
+    pieces = []
+    for char in str(value).strip():
+        if char.isdigit():
+            pieces.append(f"{digit_prefix}:{char}")
+        elif char == ".":
+            pieces.append(f"{digit_prefix}:dot")
+        elif char in "+-":
+            pieces.append(f"{digit_prefix}:{'plus' if char == '+' else 'neg'}")
+        else:
+            return []
+    return [f"{field_prefix}:BEGIN"] + pieces + [f"{field_prefix}:END"] if pieces else []
+
+
+def _result_tokens(result):
+    if not result:
+        return []
+    value = str(result).strip().upper()
+    if value in {"MADE", "DOWN", "PASS"}:
+        return [f"br:result:{value}"]
+    return _numeric_value_tokens("br:result", "br:num", value)
+
+
+def _score_tokens(score):
+    if not score:
+        return []
+    value = str(score).strip().upper().replace("_", " ")
+    match = re.fullmatch(r"(NS|EW)\s*([+-]?\d+(?:\.\d+)?)", value)
+    if not match:
+        return []
+    side, amount = match.groups()
+    return [f"br:score:side:{side}"] + _numeric_value_tokens("br:score", "br:num", amount)
+
+
 def _validate_play(played_cards, hands, leader, trump_suit=None):
     if not played_cards:
         return True
@@ -306,9 +340,17 @@ def _bridge_block_to_tokens(block, source_path):
     if play_starter:
         post_auction_tokens.append(f"br:play_leader:{play_starter}")
     play_tokens = []
-    for seat, card in played_by_seat:
+    for play_index, (seat, card) in enumerate(played_by_seat):
         play_tokens.extend(_br_card_tokens("play", seat, card))
-    context_tokens = pre_auction_tokens + bid_tokens + post_auction_tokens + play_tokens
+        trick_cards = played_by_seat[play_index - 3:play_index + 1]
+        if len(trick_cards) == 4 and (play_index + 1) % 4 == 0:
+            led_suit = trick_cards[0][1][1]
+            winner = _trick_winner(trick_cards, led_suit, trump_suit)
+            play_tokens.append(f"br:trick_winner:{winner}")
+    result_tokens = []
+    result_tokens.extend(_result_tokens(tags.get("Result")))
+    result_tokens.extend(_score_tokens(tags.get("Score")))
+    context_tokens = pre_auction_tokens + bid_tokens + post_auction_tokens + play_tokens + result_tokens
 
     base_metadata = {
         "event": tags.get("Event", "Unknown"),
@@ -373,6 +415,7 @@ def parse_pbn_to_tokens(pbn_path, max_games=None):
         return
     parsed = 0
     current = []
+    seen_deal_in_current = False
 
     def emit_block(block):
         if not block.strip():
@@ -383,11 +426,16 @@ def parse_pbn_to_tokens(pbn_path, max_games=None):
             print(f"[Warning] Skipping invalid bridge board in {os.path.basename(pbn_path)}: {exc}")
             return None
 
+    def starts_next_board(line):
+        stripped = line.lstrip()
+        return stripped.startswith("[Event ") or (stripped.startswith("[Board ") and seen_deal_in_current)
+
     with open(pbn_path, "r", encoding="utf-8", errors="ignore") as f:
         for line in f:
-            if line.startswith("[Event ") and current:
+            if starts_next_board(line) and current:
                 entries = emit_block("".join(current))
                 current = []
+                seen_deal_in_current = False
                 if entries is not None:
                     parsed += 1
                     for tokens, metadata in entries:
@@ -396,6 +444,8 @@ def parse_pbn_to_tokens(pbn_path, max_games=None):
                     if max_games and parsed >= max_games:
                         return
             current.append(line)
+            if line.lstrip().startswith("[Deal "):
+                seen_deal_in_current = True
     if current:
         entries = emit_block("".join(current))
         if entries is not None:

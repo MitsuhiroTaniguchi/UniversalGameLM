@@ -146,6 +146,20 @@ class PokerHandSimulator:
             tie_breakers = tuple(flattened)
         return (rank, *tie_breakers)
 
+    def _hand_rank_token(self, seat, score):
+        rank_names = {
+            8: "straight_flush",
+            7: "four_kind",
+            6: "full_house",
+            5: "flush",
+            4: "straight",
+            3: "three_kind",
+            2: "two_pair",
+            1: "pair",
+            0: "high_card",
+        }
+        return f"pk:hand_rank:p{seat}:{rank_names.get(score[0], 'unknown')}"
+
     def _postflop_betting_round(self, active_players, should_bet, should_continue, should_raise, bet_amount):
         order = list(active_players)
         bettor = next((seat for seat in order if should_bet(seat)), None)
@@ -329,7 +343,9 @@ class PokerHandSimulator:
             best_score = None
             for s in active_players:
                 public_tokens.extend([f"pk:showdown:p{s}", f"pk:card:{hands[s][0]}", f"pk:card:{hands[s][1]}"])
-                score = self._score_key(self.get_best_hand(hands[s], flop + turn + river))
+                raw_score = self.get_best_hand(hands[s], flop + turn + river)
+                public_tokens.append(self._hand_rank_token(s, raw_score))
+                score = self._score_key(raw_score)
                 if best_score is None or score > best_score:
                     best_score = score
                     winners = [s]
@@ -338,7 +354,7 @@ class PokerHandSimulator:
                     
         for winner in winners:
             public_tokens.append(f"pk:winner:p{winner}")
-        tokens = ["<bos>", "<poker>", "view:complete"] + public_tokens + ["<eos>"]
+        tokens = ["<bos>", "<poker>", "view:complete"] + _player_rule_tokens(self.num_seats) + public_tokens + ["<eos>"]
         
         metadata = {
             "num_players": self.num_seats,
@@ -366,10 +382,12 @@ class PokerHandSimulator:
             "view_rows_per_hand": self.num_seats + 2,
         }
         yield complete_tokens, {**base_metadata, "view_type": "complete", "viewer_seat": None}
-        public_body = complete_tokens[3:-1]
+        rule_tokens = _player_rule_tokens(self.num_seats)
+        public_body = complete_tokens[3 + len(rule_tokens):-1]
         for seat in range(1, self.num_seats + 1):
             yield (
                 ["<bos>", "<poker>", f"view:imperfect:p{seat}"]
+                + rule_tokens
                 + _private_card_tokens(seat, hands[seat])
                 + public_body
                 + ["<eos>"],
@@ -380,6 +398,7 @@ class PokerHandSimulator:
             private_tokens.extend(_private_card_tokens(seat, hands[seat]))
         yield (
             ["<bos>", "<poker>", "view:omniscient"]
+            + rule_tokens
             + private_tokens
             + _undealt_card_tokens(undealt_cards)
             + public_body
@@ -414,6 +433,10 @@ def _number_digit_tokens(prefix, value):
         elif char == "-":
             tokens.append(f"{prefix}:neg")
     return tokens or [f"{prefix}:0"]
+
+
+def _state_number_tokens(field, value):
+    return [f"pk:state:{field}:BEGIN"] + _number_digit_tokens("pk:num", value) + [f"pk:state:{field}:END"]
 
 
 def _structured_value_tokens(field, value):
@@ -555,6 +578,53 @@ def _undealt_card_tokens(cards):
     for card in cards:
         tokens.extend(["pk:undealt_card", f"pk:card:{card}"])
     return tokens
+
+
+def _player_rule_tokens(player_count):
+    return [f"pk:rule:player:{int(player_count)}"]
+
+
+def _summary_tokens(player_count, observed_count, missing_count, has_omniscient):
+    return [
+        f"pk:summary:players:{int(player_count)}",
+        f"pk:summary:private_observed:{int(observed_count)}",
+        f"pk:summary:missing_private:{int(missing_count)}",
+        f"pk:summary:omniscient_available:{1 if has_omniscient else 0}",
+    ]
+
+
+def _public_state_aux_tokens(public_actions):
+    observed_contribution_sum = 0
+    aux = []
+    index = 0
+    while index < len(public_actions):
+        token = public_actions[index]
+        if token in {
+            "pk:act:post_small_blind",
+            "pk:act:post_big_blind",
+            "pk:act:post_blind",
+            "pk:act:post_ante",
+            "pk:act:bet",
+            "pk:act:raise",
+            "pk:act:call",
+        }:
+            amount_parts = []
+            j = index + 1
+            while j < len(public_actions) and public_actions[j].startswith("pk:amt:"):
+                value = public_actions[j].split(":", 2)[2]
+                amount_parts.append("." if value == "dot" else "-" if value == "neg" else value)
+                j += 1
+            if amount_parts:
+                try:
+                    amount = int(float("".join(amount_parts)))
+                except ValueError:
+                    amount = 0
+                observed_contribution_sum += max(amount, 0)
+                aux.extend(_state_number_tokens("observed_contribution_sum", observed_contribution_sum))
+            index = j
+            continue
+        index += 1
+    return aux
 
 
 def _seat_from_action(action):
@@ -827,7 +897,13 @@ def poker_view_entries(actions, state_tokens):
 
     entries = [
         (
-            ["<bos>", "<poker>", "view:complete"] + state_tokens + public_actions + ["<eos>"],
+            ["<bos>", "<poker>", "view:complete"]
+            + _player_rule_tokens(player_count)
+            + _summary_tokens(player_count, len(observed_holes), len(missing_private_seats), has_omniscient)
+            + _public_state_aux_tokens(public_actions)
+            + state_tokens
+            + public_actions
+            + ["<eos>"],
             {**base_metadata, "view_type": "complete", "viewer_seat": None},
         )
     ]
@@ -836,6 +912,9 @@ def poker_view_entries(actions, state_tokens):
         entries.append(
             (
                 ["<bos>", "<poker>", f"view:imperfect:p{seat}"]
+                + _player_rule_tokens(player_count)
+                + _summary_tokens(player_count, len(observed_holes), len(missing_private_seats), has_omniscient)
+                + _public_state_aux_tokens(public_actions)
                 + _private_card_tokens(seat, observed_holes[seat])
                 + state_tokens
                 + public_actions
@@ -851,6 +930,9 @@ def poker_view_entries(actions, state_tokens):
         entries.append(
             (
                 ["<bos>", "<poker>", "view:omniscient"]
+                + _player_rule_tokens(player_count)
+                + _summary_tokens(player_count, len(observed_holes), len(missing_private_seats), has_omniscient)
+                + _public_state_aux_tokens(public_actions)
                 + private_tokens
                 + _undealt_card_tokens(undealt_cards)
                 + state_tokens

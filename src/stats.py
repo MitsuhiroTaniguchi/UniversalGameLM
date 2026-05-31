@@ -9,17 +9,20 @@ NON_MOVE_TOKENS = {
 
 NON_MOVE_PREFIXES = (
     "view:imperfect:",
-    "ch:rule:", "ch:fen:",
-    "sh:turn:", "sh:end:",
-    "go:sz:", "go:km:", "go:ru:", "go:ha:",
+    "ch:rule:", "ch:fen:", "ch:result:", "ch:end:", "ch:move:",
+    "sh:turn:", "sh:end:", "sh:result:", "sh:move:",
+    "go:sz:", "go:km:", "go:ru:", "go:ha:", "go:result:", "go:end:", "go:score:", "go:num:", "go:move:",
     "go:setup_b", "go:setup_w", "go:setup_e",
+    "ot:flip:", "ot:score:", "ot:result:", "ot:end:",
     "mj:rule:", "mj:bakaze:", "mj:kyoku:", "mj:honba", "mj:riichi_sticks",
     "mj:tenbo:", "mj:dora", "mj:ura_dora", "mj:wall",
     "mj:haipai:", "mj:hidden_haipai:",
     "br:dealer:", "br:vul:", "br:contract:", "br:declarer:", "br:play_leader:", "br:trump:",
+    "br:trick_winner:", "br:result:", "br:score:", "br:num:",
     "br:hand:", "br:card:",
     "pk:private_card", "pk:undealt_card",
-    "pk:seat:", "pk:card:", "pk:showdown:", "pk:winner:",
+    "pk:rule:",
+    "pk:seat:", "pk:card:", "pk:showdown:", "pk:winner:", "pk:hand_rank:", "pk:summary:", "pk:state:",
     "pk:VARIANT:", "pk:STARTING_STACKS:", "pk:BLINDS_OR_STRADDLES:", "pk:ANTES:", "pk:MIN_BET:",
     "pk:ANTE_TRIMMING_STATUS:", "pk:BETTING_TYPE:",
     "pk:num:", "pk:amt:",
@@ -101,14 +104,17 @@ class DatasetStatsAccumulator:
         for game in sorted(self.game_counts):
             count = self.game_counts[game]
             token_count = self.token_counts[game]
+            move_token_count = self.non_special_token_counts[game]
             lengths = self.length_counts[game]
             avg_len = token_count / count if count else 0
             target = target_tokens_per_game or 0
-            deficit = max(target - token_count, 0) if target else 0
-            coverage = (token_count / target) if target else None
+            deficit = max(target - move_token_count, 0) if target else 0
+            coverage = (move_token_count / target) if target else None
             games[game] = {
                 "games": count,
+                "serialized_tokens": token_count,
                 "tokens": token_count,
+                "move_tokens": move_token_count,
                 "target_tokens": target or None,
                 "token_deficit": deficit if target else None,
                 "coverage": coverage,
@@ -117,7 +123,7 @@ class DatasetStatsAccumulator:
                 "avg_length": avg_len,
                 "median_length": self._median_length(game),
                 "unique_non_special_tokens": len(self.move_counts[game]),
-                "non_special_tokens": self.non_special_token_counts[game],
+                "non_special_tokens": move_token_count,
                 "top_non_special_tokens": self.move_counts[game].most_common(10),
             }
             if self.seat_count_rows.get(game):
@@ -146,7 +152,8 @@ def print_dataset_stats(summary):
 
     for game_name, item in summary.items():
         print(f"\n--- {game_name.upper()} ({item['games']} games) ---")
-        print(f"  Tokens: {item['tokens']:,}")
+        print(f"  Serialized Tokens: {item['tokens']:,}")
+        print(f"  Move Tokens: {item['move_tokens']:,}")
         if item.get("target_tokens"):
             coverage = item["coverage"] or 0
             print(f"  Target: {item['target_tokens']:,} tokens")

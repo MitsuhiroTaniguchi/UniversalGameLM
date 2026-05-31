@@ -264,3 +264,7 @@ sh:end:impasse
 sh:end:time_up
 sh:end:declaration_win
 sh:end:draw
+sh:result:black_win
+sh:result:white_win
+sh:result:draw
+sh:move:check

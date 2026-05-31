@@ -60,7 +60,7 @@ def apply_move(board, color, move):
     if move == PASS_TOKEN:
         if legal_moves(board, color):
             raise ValueError(f"Illegal pass while {color} has legal moves")
-        return
+        return 0
     x, y = _coord_to_xy(move)
     captured = _captures(board, color, x, y)
     if not captured:
@@ -68,6 +68,7 @@ def apply_move(board, color, move):
     board[y][x] = color
     for cx, cy in captured:
         board[cy][cx] = color
+    return len(captured)
 
 
 def validate_othello_moves(moves, require_terminal=True):
@@ -131,15 +132,27 @@ def tokens_from_othello_moves(moves, require_terminal=True):
     if len(canonical) < 8:
         raise ValueError("Othello game is too short")
     color = "b"
+    board = _initial_board()
     prefixed = []
     for move in canonical:
+        flips = apply_move(board, "B" if color == "b" else "W", move)
         prefixed.append(f"ot:{color}:{move}")
+        prefixed.append(f"ot:flip:{flips}")
         color = "w" if color == "b" else "b"
-    return ["<bos>", "<othello>"] + prefixed + ["<eos>"]
+    black_score = sum(cell == "B" for row in board for cell in row)
+    white_score = sum(cell == "W" for row in board for cell in row)
+    if black_score > white_score:
+        result = "black_win"
+    elif white_score > black_score:
+        result = "white_win"
+    else:
+        result = "draw"
+    summary = [f"ot:score:b:{black_score}", f"ot:score:w:{white_score}", f"ot:result:{result}", "ot:end:terminal"]
+    return ["<bos>", "<othello>"] + prefixed + summary + ["<eos>"]
 
 
 def othello_move_count(tokens):
-    return sum(1 for token in tokens[2:-1] if token not in _PASS_TOKENS)
+    return sum(1 for token in tokens[2:-1] if re.fullmatch(r"ot:[bw]:.+", token) and token not in _PASS_TOKENS)
 
 
 def parse_othello_pgn_to_tokens(pgn_path, max_games=None):

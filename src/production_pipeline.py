@@ -13,6 +13,8 @@ from src.chess_parser import parse_chess_inputs
 from src.shogi_parser import parse_shogi_directory, validate_shogi_token_sequence
 from src.go_parser import parse_go_directory, validate_go_token_sequence
 from src.othello_parser import (
+    _initial_board as othello_initial_board,
+    apply_move as apply_othello_move,
     parse_othello_hf_dataset,
     parse_othello_inputs,
     parse_othello_jsonl_to_tokens,
@@ -27,6 +29,7 @@ from src.bridge_parser import _validate_play as validate_bridge_play
 from src.hf_uploader import HuggingFaceShardUploader
 from src.mahjonglm_compat import entry_to_mahjonglm_row, entry_to_mahjonglm_row_tokens
 from src.stats import DatasetStatsAccumulator
+from src.stats import is_counted_move_token
 from src.tokenizer import UniversalGameTokenizer
 
 
@@ -91,6 +94,7 @@ def validate_poker_public_sequence(tokens):
             continue
         if token.startswith((
             "pk:VARIANT:",
+            "pk:rule:player:",
             "pk:STARTING_STACKS:",
             "pk:MIN_BET:",
             "pk:ANTE_TRIMMING_STATUS:",
@@ -99,6 +103,9 @@ def validate_poker_public_sequence(tokens):
             "pk:amt:",
             "pk:showdown:",
             "pk:winner:",
+            "pk:hand_rank:",
+            "pk:summary:",
+            "pk:state:",
         )):
             continue
         if token in ("pk:private_card", "pk:undealt_card"):
@@ -159,11 +166,61 @@ def source_id_for_path(path):
     return f"local-dir:{resolved.name}:{digest}"
 
 
+def _source_path_allowed(source_path, allowed_source_paths):
+    if not allowed_source_paths:
+        return False
+    source_text = str(source_path)
+    for allowed in allowed_source_paths:
+        allowed_text = str(allowed)
+        if allowed_text.startswith("hf://"):
+            if source_text == allowed_text or source_text.startswith(f"{allowed_text}:"):
+                return True
+            continue
+        try:
+            source_resolved = Path(source_text).resolve()
+            allowed_resolved = Path(allowed_text).resolve()
+        except OSError:
+            continue
+        if allowed_resolved.is_dir():
+            try:
+                source_resolved.relative_to(allowed_resolved)
+                return True
+            except ValueError:
+                continue
+        if source_resolved == allowed_resolved:
+            return True
+    return False
+
+
+def _entry_source_allowed(metadata, allowed_source_ids=None, allowed_source_paths=None):
+    if allowed_source_ids is None and allowed_source_paths is None:
+        return True
+    source_path = metadata.get("source_path")
+    if source_path and _source_path_allowed(source_path, allowed_source_paths):
+        return True
+    sid = metadata.get("source_id")
+    return bool(allowed_source_ids is not None and sid in allowed_source_ids)
+
+
+def _catalog_metadata(source):
+    if not source:
+        return {}
+    keys = (
+        "name",
+        "source_class",
+        "quality_tier",
+        "license",
+        "license_verified",
+        "priority",
+    )
+    return {f"catalog_{key}": source.get(key) for key in keys if key in source}
+
+
 def iter_game_entries(game, input_paths, max_records=None):
     emitted = 0
     emitted_groups = 0
     grouped_views = game in {"poker", "bridge"}
-    for input_path in input_paths:
+    for input_index, input_path in enumerate(input_paths):
         if max_records is not None and (emitted_groups if grouped_views else emitted) >= max_records:
             return
         remaining = None
@@ -201,6 +258,7 @@ def iter_game_entries(game, input_paths, max_records=None):
                 "tokens": tokens,
                 "metadata": {
                     **metadata,
+                    "input_index": input_index,
                     "source_id": source_id_for_path(actual_source),
                     "source_name": Path(actual_source).name if not str(actual_source).startswith("hf://") else actual_source,
                     "ingestion_version": 2,
@@ -274,6 +332,9 @@ def validate_entry(entry):
                     raise ProductionDatasetError(f"Unsupported chess variant token: {token}")
                 i += 1
                 continue
+            if token.startswith(("ch:result:", "ch:end:", "ch:move:")):
+                i += 1
+                continue
             if token.startswith("ch:fen:r"):
                 fen_ranks = {}
                 fen_fields = {}
@@ -332,16 +393,41 @@ def validate_entry(entry):
     if game == "othello":
         try:
             raw_moves = []
+            aux_tokens = []
             for token in tokens[2:-1]:
+                if token.startswith(("ot:flip:", "ot:score:", "ot:result:", "ot:end:")):
+                    aux_tokens.append(token)
+                    continue
                 if not re.fullmatch(r"ot:[bw]:.+", token):
                     raise ProductionDatasetError(f"Invalid othello token: {token}")
                 raw_moves.append(token.split(":", 2)[2])
-            validate_othello_moves(raw_moves)
+            canonical_moves = validate_othello_moves(raw_moves)
+            board = othello_initial_board()
+            color = "B"
+            expected_aux = []
+            for move in canonical_moves:
+                flips = apply_othello_move(board, color, move)
+                expected_aux.append(f"ot:flip:{flips}")
+                color = "W" if color == "B" else "B"
+            black_score = sum(cell == "B" for row in board for cell in row)
+            white_score = sum(cell == "W" for row in board for cell in row)
+            result = "black_win" if black_score > white_score else "white_win" if white_score > black_score else "draw"
+            expected_aux.extend([f"ot:score:b:{black_score}", f"ot:score:w:{white_score}", f"ot:result:{result}", "ot:end:terminal"])
+            if aux_tokens != expected_aux:
+                raise ProductionDatasetError("Othello auxiliary tokens do not match replayed game")
         except ValueError as exc:
             raise ProductionDatasetError(f"Invalid Othello sequence: {exc}") from exc
     if game == "poker":
         if not tokens[2].startswith("view:"):
             raise ProductionDatasetError("Poker entry is missing a view token")
+        rule_tokens = [token for token in tokens[3:-1] if token.startswith("pk:rule:player:")]
+        if rule_tokens:
+            if len(rule_tokens) != 1:
+                raise ProductionDatasetError("Poker entry must contain at most one player-count rule token")
+            if not re.fullmatch(r"pk:rule:player:\d+", rule_tokens[0]):
+                raise ProductionDatasetError(f"Invalid poker player-count rule token: {rule_tokens[0]}")
+            if int(rule_tokens[0].rsplit(":", 1)[1]) != int(metadata.get("seat_count")):
+                raise ProductionDatasetError("Poker player-count rule token does not match metadata.seat_count")
         if any(pattern.search(token) for token in tokens for pattern in PRIVATE_POKER_TOKEN_PATTERNS):
             raise ProductionDatasetError("Poker entry leaks raw private hole-card tokens")
         view_type = metadata.get("view_type")
@@ -412,6 +498,7 @@ def validate_entry(entry):
         calls = []
         played_cards = []
         played_seats = []
+        trick_winner_tokens = []
         i = 3  # skip <bos> <bridge> view:*
         end = len(tokens) - 1  # stop before <eos>
         while i < end:
@@ -431,6 +518,11 @@ def validate_entry(entry):
                 i += 1
                 continue
             if token.startswith(("br:vul:", "br:contract:", "br:declarer:")):
+                i += 1
+                continue
+            if token.startswith(("br:trick_winner:", "br:result:", "br:score:", "br:num:")):
+                if token.startswith("br:trick_winner:"):
+                    trick_winner_tokens.append(token.split(":", 2)[2])
                 i += 1
                 continue
             if token.startswith("br:hand:"):
@@ -477,6 +569,26 @@ def validate_entry(entry):
                 expected_seats = bridge_expected_play_seats(played_cards, play_leader, trump_suit)
                 if played_seats != expected_seats:
                     raise ProductionDatasetError("Bridge play seat annotations do not match trick order")
+                expected_winners = []
+                for trick_start in range(0, len(played_cards), 4):
+                    trick_cards = played_cards[trick_start:trick_start + 4]
+                    if len(trick_cards) < 4:
+                        continue
+                    trick_seats = played_seats[trick_start:trick_start + 4]
+                    led_suit = trick_cards[0][1]
+                    candidates = [
+                        (seat, card)
+                        for seat, card in zip(trick_seats, trick_cards)
+                        if trump_suit and card[1] == trump_suit
+                    ] or [
+                        (seat, card)
+                        for seat, card in zip(trick_seats, trick_cards)
+                        if card[1] == led_suit
+                    ]
+                    ranks = "AKQJT98765432"
+                    expected_winners.append(min(candidates, key=lambda item: ranks.index(item[1][0]))[0])
+                if trick_winner_tokens != expected_winners:
+                    raise ProductionDatasetError("Bridge trick-winner auxiliary tokens do not match play")
             if tokens[2] == "view:omniscient" and played_cards:
                 validate_bridge_play(played_cards, hands, play_leader, trump_suit)
             elif tokens[2].startswith("view:imperfect:") and played_cards and hand_count:
@@ -499,6 +611,14 @@ def row_token_count(row):
     if "input_ids" in row:
         return len(row["input_ids"])
     return int(row.get("length") or 0)
+
+
+def row_serialized_token_count(row):
+    return row_token_count(row)
+
+
+def move_token_count_for_entry(entry):
+    return sum(1 for token in entry.get("tokens") or [] if is_counted_move_token(token))
 
 
 class JsonlShardWriter:
@@ -546,7 +666,7 @@ class JsonlShardWriter:
         os.replace(self.current_temp_path, self.current_path)
         info = {
             "path": str(self.current_path),
-            "tokens": self.current_tokens,
+            "serialized_tokens": self.current_tokens,
             "rows": self.current_rows,
             "sha256_uncompressed_jsonl": self.current_hash.hexdigest(),
         }
@@ -615,6 +735,8 @@ def build_game_shards(
     cached_entries_path=None,
     tokenizer_fingerprint=None,
     allowed_source_ids=None,
+    allowed_source_paths=None,
+    source_catalog_entries=None,
 ):
     if output_format not in {"universal_jsonl", "unified_jsonl", "mahjonglm_jsonl"}:
         raise ValueError(f"Unsupported output_format: {output_format}")
@@ -644,6 +766,7 @@ def build_game_shards(
     )
     stats = DatasetStatsAccumulator()
     total_tokens = 0
+    total_serialized_tokens = 0
     total_rows = 0
     uploaded = []
     _progress_start = time.monotonic()
@@ -668,13 +791,20 @@ def build_game_shards(
             entry_iter = iter_game_entries(game, input_paths, max_records=max_records)
         for entry in entry_iter:
             metadata = entry.get("metadata") or {}
-            if allowed_source_ids is not None:
-                sid = metadata.get("source_id")
-                if sid not in allowed_source_ids:
+            if allowed_source_ids is not None or allowed_source_paths is not None:
+                if not _entry_source_allowed(metadata, allowed_source_ids, allowed_source_paths):
                     raise ProductionDatasetError(
-                        f"Entry source_id '{sid}' is not in allowed_source_ids. "
+                        f"Entry source '{metadata.get('source_path') or metadata.get('source_id')}' is not allowed. "
                         f"Source: {metadata.get('source_name', '?')}"
                     )
+            if source_catalog_entries:
+                source_index = int(metadata.get("input_index") or 0)
+                source_index = min(source_index, len(source_catalog_entries) - 1)
+                catalog_metadata = _catalog_metadata(source_catalog_entries[source_index])
+                metadata.update(catalog_metadata)
+                if catalog_metadata.get("catalog_name"):
+                    metadata["source_name"] = catalog_metadata["catalog_name"]
+                entry["metadata"] = metadata
             starts_new_view_group = game not in {"poker", "bridge"} or metadata.get("view_type") == "complete"
             if total_tokens >= target_tokens and starts_new_view_group:
                 break
@@ -683,7 +813,8 @@ def build_game_shards(
                 stats_entry = {**entry, "tokens": entry_to_mahjonglm_row_tokens(entry)}
             completed = writer.write(entry, starts_new_view_group=starts_new_view_group)
             stats.update(stats_entry)
-            total_tokens += row_token_count(stats_entry)
+            total_tokens += move_token_count_for_entry(entry)
+            total_serialized_tokens += row_serialized_token_count(stats_entry)
             total_rows += 1
 
             if time.monotonic() - _progress_last >= 30:
@@ -719,7 +850,9 @@ def build_game_shards(
         "game": game,
         "status": status,
         "rows": total_rows,
+        "move_tokens": total_tokens,
         "tokens": total_tokens,
+        "serialized_tokens": total_serialized_tokens,
         "output_format": output_format,
         "tokenizer_fingerprint": effective_fingerprint,
         "target_tokens": target_tokens,
